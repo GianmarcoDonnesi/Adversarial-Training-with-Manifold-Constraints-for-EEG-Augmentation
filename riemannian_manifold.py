@@ -55,37 +55,3 @@ class ProjectionCS(TransformerMixin):
                 ret[j, i] = f @ x2[j, i] @ f.T
                 ret[j, i] += self.r * np.eye(self.n_rank)
         return ret
-
-class Spatial():
-
-    def __init__(self, config, dataset, n_rank = 24):
-
-        self.n_rank = n_rank
-        self.dataset = dataset
-        self.config = config
-
-    def TangentSpace(self, spoc):
-
-        #Riemannian Space -> Tangent Space
-        g = Riemann(n = 1).transform(spoc)
-        sc = StandardScaler()
-        sc.fit(g)
-        res = sc.transform(g)
-
-        return res
-
-    def projection(self, X_train, X_test):
-
-        #Covariance matrix
-        covariance_train = (Covariances('oas').transform(X_train))[:, None, :, :]
-        covariance_test  = (Covariances('oas').transform(X_test))[:, None, :, :]
-
-        pcs = ProjectionCS(n_rank = self.n_rank)
-
-        pcs_train = pcs.fit(covariance_train).transform(covariance_train)
-        pcs_test  = pcs.fit(covariance_train).transform(covariance_test)
-
-        train = self.TangentSpace(pcs_train)
-        test  = self.TangentSpace(pcs_test)
-
-        return train, test

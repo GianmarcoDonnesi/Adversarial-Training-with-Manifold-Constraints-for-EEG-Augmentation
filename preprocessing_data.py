@@ -4,6 +4,7 @@ import pandas as pd
 import mne
 from pyriemann.estimation import Covariances
 from pyriemann.tangentspace import TangentSpace
+#from riemannian_manifold import Riemann, ProjectionCS
 from autoreject import AutoReject
 from tqdm.notebook import tqdm
 import logging
@@ -32,6 +33,12 @@ def preprocess_subject(subject_id, datapath, derivatives_path, reference, l_freq
     8) Cov SPD + TangentSpace
     9) Salvataggio .npz
     """
+
+    #If you want to use Class Riemann and ProjectionCS of riemannian_manifold.py file
+    '''
+    n_rank = 24
+    riemann_components = 1
+    '''
 
     total_steps = 9
     out_fn = os.path.join(derivatives_path, f"sub-{subject_id}_preprocessed_tangentspace.npz")
@@ -175,6 +182,16 @@ def preprocess_subject(subject_id, datapath, derivatives_path, reference, l_freq
                 pbar_subj.update(total_steps - pbar_subj.n)
                 logging.error(f"Sub-{subject_id}: Data contains NaN or Inf. Skipping...")
                 return
+            
+            #If you ant to use Class Riemann and ProjectionCS of riemannian_manifold.py file
+            '''
+            cov_mats = Covariances(estimator = 'oas').fit_transform(data)[:, None, :, :]
+            pcs = ProjectionCS(n_rank = n_rank)
+            spoc = pcs.fit(cov_mats).transform(cov_mats)
+            riemann = Riemann(n = riemann_components)
+            ts_features = riemann.transform(spoc)
+            pbar_subj.update(1)
+            '''
 
             cov_mats = Covariances(estimator='oas').fit_transform(data)
             ts = TangentSpace()
