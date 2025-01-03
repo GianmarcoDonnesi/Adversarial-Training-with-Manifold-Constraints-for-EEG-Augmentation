@@ -14,8 +14,83 @@ from wgan_gp import (
 from prepare_tft_data import prepare_tft_data
 from tft_model import TFTRefinedModel, train_tft
 
+def train_wgan_synthetic(
+    datapath='/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106',
+    subject_ids=None,
+    n_rank=24,
+    batch_size=64,
+    num_steps=10000,
+    synth_file_name='synthetic_data.npz',
+    train_data_file = 'train_proj.npz',
+    test_data_file = 'test_proj.npz'
+):
 
+    if subject_ids is None:
+        subject_ids = ['{:03d}'.format(i) for i in range(1, 52)]
 
+    derivatives_path = os.path.join(datapath, 'derivatives', 'preprocessing')
+
+    train_file_path = os.path.join(derivatives_path, train_data_file)
+    if not os.path.exists(train_file_path):
+        raise FileNotFoundError(f"[ERROR] File {train_file_path} non trovato. Assicurati di aver eseguito prepare_wgan_data.")
+
+    print(f"[INFO] Caricamento dei dati di training da {train_file_path}.")
+    train_data = np.load(train_file_path)
+    features = torch.tensor(train_data['features'], dtype=torch.float32)
+    labels = torch.tensor(train_data['labels'], dtype=torch.float32)
+
+    dataset = EEGDatasetWGAN(features, labels)
+    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
+
+    unique_labels, counts = np.unique(labels.numpy(), return_counts=True)
+    total_count = counts.sum()
+    proportions = counts / total_count
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    netD = WGAN_GP_Discriminator(ndf = 64, gp_scale = 10).to(device)
+    netG = WGAN_GP_Generator(nz = 300, ngf = 100, s_length = 50).to(device)
+
+    wgan_gp_init_w(netD)
+    wgan_gp_init_w(netG)
+
+    optD = torch.optim.Adam(netD.parameters(), lr = 0.001, betas = (0.5, 0.99))
+    optG = torch.optim.Adam(netG.parameters(), lr = 0.001, betas = (0.5, 0.99))
+
+    train(
+        D_net = netD,
+        G_net = netG,
+        D_opt = optD,
+        G_opt = optG,
+        lr_D = optD.param_groups[0]['lr'],
+        lr_G = optG.param_groups[0]['lr'],
+        n_ots = 5,
+        n_steps = num_steps,
+        dataloader = dataloader
+    )
+
+    netG.eval()
+    num_synth_signals = 4000
+
+    with torch.no_grad():
+        synthetic_data = generate_signals(netG, num_synth_signals, device)
+
+    synthetic_data_np = synthetic_data.cpu().numpy()
+
+    synthetic_labels = np.random.choice(
+        unique_labels,
+        size=num_synth_signals,
+        p=proportions
+    ).astype(int)
+
+    out_synth_file = os.path.join(derivatives_path, synth_file_name)
+    np.savez(
+        out_synth_file,
+        ts_features=synthetic_data_np,
+        labels=synthetic_labels
+    )
+
+    print(f"\nSaved {num_synth_signals} synthetic signals in {out_synth_file}.\n")
 
 def train_tft(
     datapath='/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106',
@@ -107,7 +182,15 @@ def main():
     DATAPATH = '/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106'
     SUBJECT_IDS = ['{:03d}'.format(i) for i in range(1, 52)]
 
-
+    train_wgan_synthetic(
+        datapath=DATAPATH,
+        subject_ids=SUBJECT_IDS,
+        n_rank=24,           #rank per proiezione Riemann
+        batch_size=64,
+        num_steps=10000,
+        synth_file_name='synthetic_data.npz'
+    )
+    
     #Allena il TFT sul dataset arricchito (reale + sintetico)
     train_tft(
         datapath=DATAPATH,
