@@ -6,3 +6,4 @@ mne
 pandas
 autoreject
 tqdm
+faiss-gpu
