@@ -1,0 +1,8 @@
+numpy
+torch
+scikit-learn
+pyriemann
+mne
+pandas
+autoreject
+tqdm
