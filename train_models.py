@@ -1,10 +1,7 @@
 import os
 import numpy as np
 import torch
-from sklearn.model_selection import train_test_split
 from load_preprocessed_data import load_preprocessed_data
-from prepare_wgan_data import prepare_wgan_data
-from riemannian_manifold import Spatial
 from wgan_gp import (
     WGAN_GP_Discriminator,
     WGAN_GP_Generator,

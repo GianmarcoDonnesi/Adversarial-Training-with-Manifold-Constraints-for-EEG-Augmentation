@@ -5,7 +5,6 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from load_preprocessed_data import load_preprocessed_data
-from riemannian_manifold import Spatial
 from sklearn.model_selection import train_test_split
 from tqdm.notebook import tqdm
 
