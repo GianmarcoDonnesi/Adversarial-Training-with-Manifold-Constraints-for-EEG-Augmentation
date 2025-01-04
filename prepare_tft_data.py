@@ -26,6 +26,8 @@ class EEGSequenceDatasetTFT(Dataset):
 
     def __getitem__(self, idx):
         sequence = self.features[idx:idx + self.sequence_length]
+        sequence = sequence.view(self.sequence_length, -1)
+
         label = self.labels[idx + self.sequence_length - 1]
 
         if self.transform:
@@ -47,15 +49,25 @@ def prepare_tft_data(loaded_data, sequence_length=10, batch_size=64, shuffle=Tru
     - DataLoader: DataLoader per l'addestramento del TFT.
     """
 
-    ts_features = loaded_data['ts_features']
+    X = loaded_data['ts_features']
+    y = loaded_data['labels']
+
+    n_channels = 32
+    n_frames = 16
+
+
+    total_features = n_channels * n_frames
+    X_cut = X[:, :total_features]
 
     #Normalizzazione: min-max per ogni feature
-    min_val = ts_features.min(axis=0)
-    max_val = ts_features.max(axis=0) + 1e-8
-    ts_features_norm = (ts_features - min_val) / (max_val - min_val)
+    min_val = X_cut.min(axis=0)
+    max_val = X_cut.max(axis=0) + 1e-8
+    X_norm = (X_cut - min_val) / (max_val - min_val)
+
+    X_3d = X_norm.reshape(-1, n_channels, n_frames)
 
     #Converti le features e le etichette in PyTorch tensors
-    features_tensor = torch.tensor(ts_features_norm, dtype=torch.float32)
+    features_tensor = torch.tensor(X_3d, dtype=torch.float32)
     labels_tensor = torch.tensor(loaded_data['labels'], dtype=torch.long)
 
 

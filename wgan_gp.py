@@ -2,8 +2,18 @@ import torch
 from torch import autograd
 import torch.nn as nn
 import torch.nn.functional as F
+from tqdm.notebook import tqdm
+import logging
+import os
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+logging.basicConfig(
+    filename=os.path.join('/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106/derivatives/preprocessing', 'training.log'),
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 #Generate a number of signals randomly.
 def generate_signals(G_net, n_signals, device = device):
@@ -355,31 +365,25 @@ class WGAN_GP_Discriminator(nn.Module):
 def log_print(step_g, log_data, dataset_size, n_epochs, n_steps):
 
     epoch = max(int(step_g / dataset_size), 1)
-    log = ["Epoch {:d} of {:d}".format(epoch, n_epochs)]
+    headers = ["Epoch", "Discriminator_err", "Discriminator_err_gp", "Generator_err", "lr_Discriminator", "lr_Generator"]
+    values = [
+        epoch,
+        log_data.get('Discriminator_err', {}).get('v', 0),
+        log_data.get('Discriminator_err_gp', {}).get('v', 0),
+        log_data.get('Generator_err', {}).get('v', 0),
+        log_data.get('lr_Discriminator', {}).get('v', 0),
+        log_data.get('lr_Generator', {}).get('v', 0)
+    ]
 
-    GAN_information = [""]
-    ms = sorted(log_data.keys())
+    # Formattazione delle metriche con precisione limitata
+    formatted_metrics = " | ".join([f"{value:.4f}" for value in values[1:]])
+    log_message = f"Epoch {values[0]} of {n_epochs} | {formatted_metrics}"
 
-    for m in ms:
-        GAN_information.append('WGAN_gp information -> {}: {}'.format(m, log_data[m]))
-
-    log.append("\n".join(GAN_information))
-
-    ret = " ".join(log)
-
-    print(ret)
-
-    return log
+    print(log_message)
+    logging.info(log_message)
 
 def add_metric(log_data, name, v, group = None, precision = 5):
-
-    try:
-        v = v.item()
-
-    except AttributeError:
-        v = v
-
-    log_data[name] = dict(v = v, group = group, precision = precision)
+     log_data[name] = {'v': v}
 
 def linear_decay(optimizer, step_g, lr_range, lr_range_step):
 
@@ -431,27 +435,33 @@ def train(D_net, G_net, D_opt, G_opt, lr_D, lr_G, n_ots, n_steps, dataloader):
     step_g = 0
     dataloader_i = iter(dataloader)
 
-    while step_g < n_steps:
+    with tqdm(total=n_steps, desc="Training WGAN-GP", ncols=100) as pbar:
+        for step_g in range(1, n_steps + 1):
 
-        log_data = {}
+            log_data = {}
 
-        #One training step
-        for i in range(n_ots):
-            batch_r = data_fetch(dataloader_i = dataloader_i, dataloader = dataloader, device = device)
+            #One training step
+            for i in range(n_ots):
+                batch_r = data_fetch(dataloader_i = dataloader_i, dataloader = dataloader, device = device)
 
-            #Discriminator update
-            log_data = D_net.train_one_step(batch_r = batch_r, G_net = G_net, D_opt=D_opt, log_data = log_data, device = device)
+                #Discriminator update
+                log_data = D_net.train_one_step(batch_r = batch_r, G_net = G_net, D_opt=D_opt, log_data = log_data, device = device)
 
-            #Generator update
-            if i == (n_ots - 1):
-                log_data = G_net.train_one_step(batch_r = batch_r, D_net = D_net, G_net = G_net, G_opt = G_opt, log_data = log_data, device = device)
+                #Generator update
+                if i == (n_ots - 1):
+                    log_data = G_net.train_one_step(batch_r = batch_r, D_net = D_net, G_net = G_net, G_opt = G_opt, log_data = log_data, device = device)
 
-        step_g += 1
-        log_data = step(D_opt=D_opt, G_opt= G_opt, lr_D=lr_D, lr_G = lr_G, step_init=step_init, log_data=log_data, step_g=step_g, n_steps=n_steps)
+            step_g += 1
+            log_data = step(D_opt=D_opt, G_opt= G_opt, lr_D=lr_D, lr_G = lr_G, step_init=step_init, log_data=log_data, step_g=step_g, n_steps=n_steps)
 
-        if step_g % 20 == 0:
-            log_print(step_g = step_g, log_data = log_data, dataset_size = dataset_size, n_epochs = n_epochs, n_steps = n_steps)
+            if step_g % 20 == 0:
+                metrics = {key: f"{log_data[key]['v']:.4f}" for key in sorted(log_data.keys())}
+                pbar.set_postfix(metrics)
 
-        print(f"End of {step_g} global step")
+                # Stampa log formattato
+                log_print(step_g=step_g, log_data=log_data, dataset_size=dataset_size, n_epochs=n_epochs, n_steps=n_steps)
+
+            pbar.update(1)
 
     print("Training finished")
+    logging.info("Training finished")

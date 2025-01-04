@@ -4,8 +4,15 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from prepare_tft_data import load_preprocessed_data, prepare_tft_data
-from tqdm.notebook import tqdm
+from tqdm import tqdm
+import logging  # oppure: from tqdm import tqdm
 
+logging.basicConfig(
+    filename=os.path.join('/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106/derivatives/preprocessing', 'tft_training.log'),
+    level=logging.INFO,
+    format='%(asctime)s | %(levelname)s | %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
 
 #1) Gated Residual Network (GRN)
 
@@ -275,51 +282,68 @@ class TFTRefinedModel(nn.Module):
         return logits
 
 
-'''
-if __name__ == "__main__":
+def train_tft(model, dataloader, num_epochs=10, learning_rate=1e-4, device='cuda', task='classification'):
+    """
+    Addestra il modello TFT.
 
-    datapath = '/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106'
-    derivatives_path = os.path.join(datapath, 'derivatives', 'preprocessing')
-    subject_ids = ['{:03d}'.format(i) for i in range(1, 10)]
+    Parameters:
+    - model (nn.Module): Il modello TFT da addestrare.
+    - dataloader (DataLoader): DataLoader per l'addestramento.
+    - num_epochs (int): Numero di epoche.
+    - learning_rate (float): Tasso di apprendimento.
+    - device (torch.device): Dispositivo su cui addestrare ('cpu' o 'cuda').
+    - task (str): 'classification' o 'regression'.
+    """
+    model.to(device)
+    if task == 'classification':
+        criterion = nn.CrossEntropyLoss()
+    elif task == 'regression':
+        criterion = nn.MSELoss()
+    else:
+        raise ValueError("Il task deve essere 'classification' o 'regression'.")
 
-    # Carica dati preprocessati
-    loaded_data = load_preprocessed_data(subject_ids, derivatives_path)
-    real_labels = loaded_data['labels']
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-    sequence_length = 10
-    batch_size = 32
+    for epoch in range(num_epochs):
+        model.train()
+        running_loss = 0.0
+        correct = 0
+        total = 0
 
-    # Prepara DataLoader TFT
-    tft_dataloader = prepare_tft_data(
-        loaded_data,
-        sequence_length=sequence_length,
-        batch_size=batch_size,
-        shuffle=True
-    )
+        progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}", leave=False)
 
-    # Dimensione feature
-    feature_dim = loaded_data['ts_features'].shape[1]
+        for batch_sequences, batch_labels in progress_bar:
+            batch_sequences = batch_sequences.to(device)
+            batch_labels = batch_labels.to(device)
 
-    # Inizializza il modello
-    model = TFTRefinedModel(
-        input_size=feature_dim,
-        hidden_size=64,
-        num_heads=4,
-        num_outputs=5,
-        num_encoder_layers=2,
-        dropout=0.1,
-        use_pos_enc=True
-    )
+            optimizer.zero_grad()
+            outputs = model(batch_sequences)
 
-    # Addestramento (classificazione) su CPU
-    train_tft(
-        model,
-        tft_dataloader,
-        num_epochs=10,
-        learning_rate=1e-3,
-        device='cpu',
-        task='classification'
-    )
+            if task == 'classification':
+                loss = criterion(outputs, batch_labels)
+                _, predicted = torch.max(outputs.data, 1)
+                total += batch_labels.size(0)
+                correct += (predicted == batch_labels).sum().item()
+            else:
+                loss = criterion(outputs, batch_labels.float())
 
-    print("Training completato")
-'''
+            loss.backward()
+            optimizer.step()
+
+            running_loss += loss.item()
+            if task == 'classification':
+                progress_bar.set_postfix({'Loss': running_loss / (progress_bar.n + 1), 'Accuracy': 100 * correct / total})
+            else:
+                progress_bar.set_postfix({'Loss': running_loss / (progress_bar.n + 1)})
+
+        epoch_loss = running_loss / len(dataloader)
+        if task == 'classification':
+            epoch_acc = 100 * correct / total
+            print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.2f}%")
+            logging.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.2f}%")
+        else:
+            print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
+            logging.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
+
+    print("Addestramento completato.")
+    logging.info("Addestramento completato.")
