@@ -1,10 +1,10 @@
+import os
 import torch
 from torch import autograd
 import torch.nn as nn
 import torch.nn.functional as F
 from tqdm.notebook import tqdm
 import logging
-import os
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -128,7 +128,6 @@ class WGAN_GP_Generator(nn.Module):
         self.c13 = nn.Conv1d(self.ngf, 32, 1, 1, 0)
         self.end = nn.Linear(42, 16)
 
-        #Initialise the weights
         self.s1.apply(sequential_init_w)
         self.s2.apply(sequential_init_w)
         self.s3.apply(sequential_init_w)
@@ -375,7 +374,6 @@ def log_print(step_g, log_data, dataset_size, n_epochs, n_steps):
         log_data.get('lr_Generator', {}).get('v', 0)
     ]
 
-    # Formattazione delle metriche con precisione limitata
     formatted_metrics = " | ".join([f"{value:.4f}" for value in values[1:]])
     log_message = f"Epoch {values[0]} of {n_epochs} | {formatted_metrics}"
 
@@ -458,7 +456,6 @@ def train(D_net, G_net, D_opt, G_opt, lr_D, lr_G, n_ots, n_steps, dataloader):
                 metrics = {key: f"{log_data[key]['v']:.4f}" for key in sorted(log_data.keys())}
                 pbar.set_postfix(metrics)
 
-                # Stampa log formattato
                 log_print(step_g=step_g, log_data=log_data, dataset_size=dataset_size, n_epochs=n_epochs, n_steps=n_steps)
 
             pbar.update(1)

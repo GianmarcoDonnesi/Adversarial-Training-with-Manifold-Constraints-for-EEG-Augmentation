@@ -1,8 +1,6 @@
 import numpy as np
 from sklearn.base import TransformerMixin
 from pyriemann.tangentspace import TangentSpace
-from pyriemann.estimation import Covariances
-from sklearn.preprocessing import StandardScaler
 from numpy.linalg import eigh, pinv
 
 class Riemann(TransformerMixin):
