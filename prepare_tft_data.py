@@ -1,21 +1,12 @@
 import os
-import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from load_preprocessed_data import load_preprocessed_data
-from tqdm.notebook import tqdm
+
 
 class EEGSequenceDatasetTFT(Dataset):
     def __init__(self, features, labels, sequence_length=10, transform=None):
-        """
-        Dataset per TFT.
-
-        Parameters:
-        - features (numpy.ndarray): Array delle features (ts_features).
-        - labels (numpy.ndarray): Array delle etichette.
-        - sequence_length (int): Lunghezza della sequenza temporale.
-        - transform: Trasformazioni da applicare ai dati.
-        """
+        
         self.features = features
         self.labels = labels
         self.sequence_length = sequence_length
@@ -36,18 +27,7 @@ class EEGSequenceDatasetTFT(Dataset):
         return sequence.clone().detach(), label.clone().detach()
 
 def prepare_tft_data(loaded_data, sequence_length=10, batch_size=64, shuffle=True):
-    """
-    Prepara i DataLoader per TFT.
 
-    Parameters:
-    - loaded_data (dict): Dati caricati tramite load_preprocessed_data.
-    - sequence_length (int): Lunghezza della sequenza temporale.
-    - batch_size (int): Dimensione del batch.
-    - shuffle (bool): Se mescolare i dati.
-
-    Returns:
-    - DataLoader: DataLoader per l'addestramento del TFT.
-    """
 
     X = loaded_data['ts_features']
     y = loaded_data['labels']
@@ -59,14 +39,12 @@ def prepare_tft_data(loaded_data, sequence_length=10, batch_size=64, shuffle=Tru
     total_features = n_channels * n_frames
     X_cut = X[:, :total_features]
 
-    #Normalizzazione: min-max per ogni feature
     min_val = X_cut.min(axis=0)
     max_val = X_cut.max(axis=0) + 1e-8
     X_norm = (X_cut - min_val) / (max_val - min_val)
 
     X_3d = X_norm.reshape(-1, n_channels, n_frames)
 
-    #Converti le features e le etichette in PyTorch tensors
     features_tensor = torch.tensor(X_3d, dtype=torch.float32)
     labels_tensor = torch.tensor(loaded_data['labels'], dtype=torch.long)
 
@@ -80,7 +58,7 @@ def prepare_tft_data(loaded_data, sequence_length=10, batch_size=64, shuffle=Tru
 
 if __name__ == "__main__":
 
-    datapath = '/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106'
+    datapath = './ds005106'
     derivatives_path = os.path.join(datapath, 'derivatives', 'preprocessing')
 
 
@@ -88,11 +66,10 @@ if __name__ == "__main__":
 
     loaded_data = load_preprocessed_data(subject_ids, derivatives_path)
 
-    #Prepara il DataLoader per TFT
     sequence_length = 10
-    tft_dataloader = prepare_tft_data(loaded_data, sequence_length=sequence_length, batch_size=32, shuffle=True)
+    tft_dataloader = prepare_tft_data(loaded_data, sequence_length=sequence_length, batch_size=64, shuffle=True)
 
     for batch_sequences, batch_labels in tft_dataloader:
-        print(f"Batch sequences shape: {batch_sequences.shape}")  #(batch_size, sequence_length, feature_dim)
+        print(f"Batch sequences shape: {batch_sequences.shape}")  
         print(f"Batch labels shape: {batch_labels.shape}")
         break

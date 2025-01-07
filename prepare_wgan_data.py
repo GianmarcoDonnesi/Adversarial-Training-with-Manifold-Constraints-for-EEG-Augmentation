@@ -1,23 +1,14 @@
-# prepare_wgan_data.py
-
 import os
 import numpy as np
 import torch
 from torch.utils.data import Dataset, DataLoader
 from load_preprocessed_data import load_preprocessed_data
 from sklearn.model_selection import train_test_split
-from tqdm.notebook import tqdm
+
 
 class EEGDatasetWGAN(Dataset):
     def __init__(self, features, labels, transform=None):
-        """
-        Dataset per WGAN.
-
-        Parameters:
-        - features (numpy.ndarray): Array delle features (ts_features).
-        - labels (numpy.ndarray): Array delle etichette.
-        - transform: Trasformazioni da applicare ai dati.
-        """
+        
         self.features = features
         self.labels = labels
         self.transform = transform
@@ -35,17 +26,7 @@ class EEGDatasetWGAN(Dataset):
         return feature, label
 
 def prepare_wgan_data(loaded_data, batch_size=64, shuffle=True):
-    """
-    Prepara i DataLoader per WGAN.
 
-    Parameters:
-    - loaded_data (dict): Dati caricati tramite load_preprocessed_data.
-    - batch_size (int): Dimensione del batch.
-    - shuffle (bool): Se mescolare i dati.
-
-    Returns:
-    - DataLoader: DataLoader per l'addestramento della WGAN.
-    """
     X = loaded_data['ts_features']
     y = loaded_data['labels']
 
@@ -59,7 +40,6 @@ def prepare_wgan_data(loaded_data, batch_size=64, shuffle=True):
     X_train_cut = X_train[:, :512]
     X_test_cut = X_test[:, :512]
 
-    #Normalizzazione: z-score per ogni feature
     mean = X_train_cut.mean(axis=0)
     std = X_train_cut.std(axis=0) + 1e-8
     X_train_norm = (X_train_cut - mean) / std
@@ -71,12 +51,9 @@ def prepare_wgan_data(loaded_data, batch_size=64, shuffle=True):
     np.savez(os.path.join(derivatives_path, 'train_proj.npz'), features=X_train_3d, labels=y_train)
     np.savez(os.path.join(derivatives_path, 'test_proj.npz'), features=X_test_3d, labels=y_test)
 
-    #Converti le features e le etichette in PyTorch tensors
-    features_tensor = torch.tensor(X_train_3d, dtype=torch.float32)  # Shape: (3779, 32, 16)
+    features_tensor = torch.tensor(X_train_3d, dtype=torch.float32)  
     labels_tensor = torch.tensor(y_train, dtype=torch.long)
 
-
-    #Crea dataset e dataloader
     dataset = EEGDatasetWGAN(features_tensor, labels_tensor)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=2)
 
@@ -87,7 +64,7 @@ def prepare_wgan_data(loaded_data, batch_size=64, shuffle=True):
 
 
 if __name__ == "__main__":
-    datapath = '/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106'
+    datapath = './ds005106'
     derivatives_path = os.path.join(datapath, 'derivatives', 'preprocessing')
     subject_ids = ['{:03d}'.format(i) for i in range(1, 52)]
 
@@ -95,11 +72,8 @@ if __name__ == "__main__":
     ts_features = loaded_data['ts_features']
     labels = loaded_data['labels']
 
-    # Preparazione del DataLoader con i dati trasformati
     wgan_dataloader = prepare_wgan_data(loaded_data, batch_size=64, shuffle=True)
 
-
-    # Verifica del DataLoader
     for batch_features, batch_labels in wgan_dataloader:
         print(f"Batch features shape: {batch_features.shape}")
         print(f"Batch labels shape: {batch_labels.shape}")

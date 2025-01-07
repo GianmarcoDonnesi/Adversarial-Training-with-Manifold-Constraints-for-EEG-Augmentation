@@ -1,123 +1,183 @@
-import torch
-from torch import nn
-from torchvision import models
+import os
 import numpy as np
-from scipy import linalg
+import torch
+import torch.nn as nn
 import torch.nn.functional as F
-import faiss
+import logging
+from pyriemann.estimation import Covariances
+from pyriemann.utils.distance import distance_riemann
+from sklearn.model_selection import train_test_split
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
+from prepare_wgan_data import EEGDatasetWGAN
+from wgan_gp import generate_signals 
+from tft_model import TemporalFusionTransformer
+from prepare_tft_data import prepare_tft_data
 
-m_inception = models.inception_v3(pretrained = True).eval()
-m_inception.fc = nn.Identity()
 
-vgg = models.vgg16(pretrained = True).features.eval().cuda()
+def riemannian_distance_metric(real_data: np.ndarray, gen_data: np.ndarray) -> float:
+    """
+    Calcola la distanza Riemanniana media tra la covarianza media dei real_data e gen_data.
+    
+    Parametri:
+    - real_data:  shape (N, C, T) => N epoche, C canali, T campioni
+    - gen_data:   shape (M, C, T)
+    
+    Ritorna:
+    - dist_rg: Distanza Riemanniana (float)
+    """
+    if Covariances is None or distance_riemann is None:
+        print("[ERROR] PyRiemann non disponibile, impossibile calcolare la distanza Riemanniana.")
+        return None
 
-#Frèchet Inception Distance
-def fid(features_r, features_g):
+    # Stima covarianze SPD
+    cov_r = Covariances(estimator='oas').fit_transform(real_data)  
+    cov_g = Covariances(estimator='oas').fit_transform(gen_data)   
 
-    m_1, m_2 = features_r.mean(axis = 0), features_g.mean(axis = 0)
-    s_1, s_2 = np.cov(features_r, rowvar = False), np.cov(features_g, rowvar = False)
+    cov_r_mean = np.mean(cov_r, axis=0)  
+    cov_g_mean = np.mean(cov_g, axis=0)  
 
-    cov_m = linalg.sqrtm(s_1.dot(s_2))
-    if np.iscomplexobj(cov_m):
-        cov_m = cov_m.real
+    # Distanza Riemanniana tra le due SPD medie
+    dist_rg = distance_riemann(cov_r_mean, cov_g_mean)
+    return dist_rg
 
-    fid1 = (m_1 - m_2).dot((m_1 - m_2))
-    fid2 = np.trace(s_1 + s_2 - 2 * cov_m)
-    return fid1 + fid2
 
-#Inception Score
-def inception_s(signals, m_inception, batch_size = 32, s = 10):
-    scores = []
+def classify_real_vs_fake(real_data: np.ndarray, gen_data: np.ndarray) -> float:
+    """
+    Addestra un classificatore (LogisticRegression) per distinguere
+    real_data vs gen_data e valuta l'accuracy.
+    
+    Ritorna:
+    - accuracy (float): se ~0.5 => real e fake difficili da distinguere
+                        se ~1.0 => generati facilmente distinguibili
+    """
+    # Etichette: 1 = reale, 0 = fake
+    y_real = np.ones(len(real_data))
+    y_fake = np.zeros(len(gen_data))
 
-    for _ in range(s):
-        s_probs = []
-        for i in range(0, len(signals), batch_size):
-            batch = signals[i:i + batch_size].cuda()
 
-            with torch.no_grad():
-                y = F.softmax(m_inception(batch), dim = 1)
-            s_probs.append(y.cpu().numpy())
+    data_all = np.concatenate((real_data, gen_data), axis=0)
+    labels_all = np.concatenate((y_real, y_fake), axis=0)
 
-        s_probs = np.concatenate(s_probs)
-        x = np.mean(s_probs, axis = 0)
+    N, C, T = data_all.shape
+    data_flat = data_all.reshape(N, C*T)
 
-        scores.append(np.exp(np.mean(np.sum(s_probs * np.log(s_probs / x), axis = 1))))
+    X_train, X_test, y_train, y_test = train_test_split(
+        data_flat, labels_all,
+        test_size=0.2,
+        random_state=42,
+        stratify=labels_all
+    )
 
-    mean = np.mean(scores)
-    std = np.std(scores)
-    return mean, std
+    clf = LogisticRegression(max_iter=1000)
+    clf.fit(X_train, y_train)
+    y_pred = clf.predict(X_test)
 
-#Kernel Inception Distance
-def kid(features_r, features_g, d = 3, g = None, c_0 = 1):
+    acc = accuracy_score(y_test, y_pred)
+    return acc
 
-    features_r = torch.tensor(features_r)
-    features_g = torch.tensor(features_g)
 
-    if g is None:
-        g = 1.0 / features_r.shape[1]
+def evaluate_wgan_eeg(real_data: np.ndarray, gen_data: np.ndarray):
+    results = {}
 
-    k_xx = (g*features_r.mm(features_r.t()) + c_0) ** d
-    k_yy = (g*features_g.mm(features_g.t()) + c_0) ** d
-    k_xy = (g*features_r.mm(features_g.t()) + c_0) ** d
+    dist_riem = riemannian_distance_metric(real_data, gen_data)
+    results['RiemannianDistance'] = dist_riem
 
-    y = k_xx.mean() + k_yy.mean() - 2 * k_xy.mean()
+    acc_rf = classify_real_vs_fake(real_data, gen_data)
+    results['RealVsFakeAccuracy'] = acc_rf
 
-    return y
+    return results
 
-#Perceptual Path Length
-def ppl(generator, latent_dim, vgg, num_samples = 100):
 
-    d = []
-    for _ in range(num_samples):
-        z_1 = torch.randn(1, latent_dim).cuda()
-        z_2 = z_1 + torch.randn(1, latent_dim).cuda() * 0.1
-        signal_1, signal_2 = generator(z_1), generator(z_2)
+def validate_tft(
+    model_path: str,
+    loaded_data_test: dict,
+    sequence_length: int = 10,
+    batch_size: int = 64,
+    device: str = 'cuda'
+):
 
-        with torch.no_grad():
-            x = vgg(signal_1).view(signal_1.size(0), -1)
-            y = vgg(signal_2).view(signal_2.size(0), -1)
+    test_dataloader = prepare_tft_data(
+        loaded_data_test,
+        sequence_length=sequence_length,
+        batch_size=batch_size,
+        shuffle=False
+    )
 
-        d.append((torch.norm(x - y, dim = 1).mean()).item())
+  
+    model = TemporalFusionTransformer(
+        input_size=512,   
+        d_model=128,
+        num_lstm_layers=2,
+        n_heads=4,
+        d_ff=256,
+        num_encoder_layers=2,
+        num_decoder_layers=1,
+        dropout=0.1,
+        output_size=200,  
+        use_pos_enc=True,
+        use_lstm=True
+    ).to(device)
 
-    return np.mean(d)
+    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
 
-#Precision and Recall
-def precision_recall(features_r, features_g, k = 3):
+    all_preds = []
+    all_labels = []
 
-    i = faiss.IndexFlatL2(features_r.shape[1])
-    i.add(features_r)
+    with torch.no_grad():
+        for batch_sequences, batch_labels in test_dataloader:
+            batch_sequences = batch_sequences.to(device)
+            batch_labels = batch_labels.to(device)
 
-    #Precision
-    x, y = i.search(features_g, k)
-    precision = np.mean([np.any(i in y for i in range(len(features_r))) for _ in x])
+            outputs = model(batch_sequences) 
+            preds = torch.argmax(outputs, dim=1)
 
-    #Recall
-    i.reset()
-    i.add(features_g)
-    x, y = i.search(features_r, k)
-    recall = np.mean([np.any(i in y for i in range(len(features_g))) for _ in x])
+            all_preds.append(preds.cpu().numpy())
+            all_labels.append(batch_labels.cpu().numpy())
 
-    return precision, recall
+    all_preds = np.concatenate(all_preds)
+    all_labels = np.concatenate(all_labels)
 
-def evaluate(real_signals, generated_signals, m_inception, vgg, m_vgg = None, metrics = ['FID', 'IS', 'KID', 'PPL', 'Precision and Recall']):
+    acc = accuracy_score(all_labels, all_preds)
+    f1_micro = f1_score(all_labels, all_preds, average='micro')
+    f1_macro = f1_score(all_labels, all_preds, average='macro')
+    cm = confusion_matrix(all_labels, all_preds)
 
-    r = {}
-    if 'FID' in metrics:
-        r['FID'] = fid(real_signals, generated_signals)
+    results = {
+        'accuracy': acc,
+        'f1_micro': f1_micro,
+        'f1_macro': f1_macro,
+        'confusion_matrix': cm
+    }
+    return results
 
-    if 'IS' in metrics:
-        r['IS'] = inception_s(generated_signals, m_inception)
 
-    if 'KID' in metrics:
-        r['KID'] = kid(real_signals, generated_signals)
+if __name__ == "__main__":
+    logging.basicConfig(
+        filename="validate_models.log",
+        level=logging.INFO,
+        format="%(asctime)s | %(levelname)s | %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S"
+    )
 
-    if 'PPL' in metrics:
-        r['PPL'] = ppl(m_vgg, generated_signals, vgg)
+    real_data = np.random.randn(500, 32, 128) 
+    gen_data = np.random.randn(500, 32, 128)  
 
-    if 'Precision and Recall' in metrics:
-        r['Precision and Recall'] = precision_recall(real_signals, generated_signals, k = 3)
-    else:
-        print('Metric not used')
-        return
+    wgan_eeg_results = evaluate_wgan_eeg(real_data, gen_data)
+    print("[WGAN EEG Validation Results]", wgan_eeg_results)
 
-    return r
+    loaded_data_test = {
+        'ts_features': np.random.randn(1000, 512),
+        'labels': np.random.randint(0, 200, size=(1000,))
+    }
+    tft_model_path = "tft_model.pth"
+
+    tft_results = validate_tft(
+        model_path=tft_model_path,
+        loaded_data_test=loaded_data_test,
+        sequence_length=10,
+        batch_size=64,
+        device="cuda" if torch.cuda.is_available() else "cpu"
+    )
+    print("[TFT Validation Results]", tft_results)

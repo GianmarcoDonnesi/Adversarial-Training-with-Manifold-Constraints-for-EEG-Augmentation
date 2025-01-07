@@ -1,7 +1,12 @@
 import os
 import numpy as np
 import torch
+from torch.utils.data import DataLoader
+import torch.nn as nn
+from sklearn.model_selection import train_test_split
+from sklearn.preprocessing import LabelEncoder
 from load_preprocessed_data import load_preprocessed_data
+from prepare_wgan_data import prepare_wgan_data, EEGDatasetWGAN
 from wgan_gp import (
     WGAN_GP_Discriminator,
     WGAN_GP_Generator,
@@ -9,7 +14,7 @@ from wgan_gp import (
     train, generate_signals
 )
 from prepare_tft_data import prepare_tft_data
-from tft_model import TFTRefinedModel, train_tft
+from tft_model import TemporalFusionTransformer, train_tft
 
 
 def train_wgan_synthetic(
@@ -22,19 +27,12 @@ def train_wgan_synthetic(
     train_data_file = 'train_proj.npz',
     test_data_file = 'test_proj.npz'
 ):
-    """
-    1) Carica dati salvati dallo script prepare_wgan_data.
-    2) Crea il DataLoader per WGAN.
-    3) Allena la WGAN e genera dati sintetici.
-    4) Salva i dati sintetici.
-    """
 
     if subject_ids is None:
         subject_ids = ['{:03d}'.format(i) for i in range(1, 52)]
 
     derivatives_path = os.path.join(datapath, 'derivatives', 'preprocessing')
 
-     # 1) Caricamento dati normalizzati dal file .npz
     train_file_path = os.path.join(derivatives_path, train_data_file)
     if not os.path.exists(train_file_path):
         raise FileNotFoundError(f"[ERROR] File {train_file_path} non trovato. Assicurati di aver eseguito prepare_wgan_data.")
@@ -47,13 +45,10 @@ def train_wgan_synthetic(
     dataset = EEGDatasetWGAN(features, labels)
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=2)
 
-    # Calcolo distribuzione classi
     unique_labels, counts = np.unique(labels.numpy(), return_counts=True)
     total_count = counts.sum()
     proportions = counts / total_count
 
-
-    # 4)Inizializza e allena la WGAN
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     netD = WGAN_GP_Discriminator(ndf = 64, gp_scale = 50).to(device)
@@ -77,7 +72,6 @@ def train_wgan_synthetic(
         dataloader = dataloader
     )
 
-    # 5) Generazione di dati sintetici
     netG.eval()
     num_synth_signals = 4000
 
@@ -85,10 +79,9 @@ def train_wgan_synthetic(
         synthetic_data = generate_signals(netG, num_synth_signals, device)
 
 
-    # 6) Salvataggio dei dati sintetici
     synthetic_data_np = synthetic_data.cpu().numpy()
 
-    # Assegna etichette sintetiche in modo proporzionale
+
     synthetic_labels = np.random.choice(
         unique_labels,
         size=num_synth_signals,
@@ -120,7 +113,7 @@ def train_tft_main(
     synth_file_name='synthetic_data.npz',
     sequence_length=10,
     batch_size=64,
-    num_outputs=5,
+    num_outputs=200,
     num_epochs=15
 ):
     """
@@ -158,6 +151,17 @@ def train_tft_main(
     print(f"[INFO] Dati sintetici shape: {synth_features.shape}")
     print(f"[INFO] Totale dataset combinato: {combined_features_3d.shape}")
 
+    label_encoder = LabelEncoder()
+    combined_labels_encoded = label_encoder.fit_transform(combined_labels)
+    combined_labels = combined_labels_encoded
+    num_classes = len(label_encoder.classes_)
+    num_outputs = num_classes  # Imposta num_outputs a 200
+
+    print(f"[INFO] Number of classes after encoding: {num_classes}")
+
+    assert combined_labels.max() < num_outputs, "Alcune etichette superano il numero di classi previsto."
+    print(f"[INFO] Numero di classi: {num_classes}")
+
     combined_features_2d = combined_features_3d.reshape(-1, 32*16)
 
     # 4)Crea DataLoader per TFT
@@ -177,25 +181,50 @@ def train_tft_main(
 
     feature_dim = combined_features_2d.shape[1]
 
-    model = TFTRefinedModel(
+    model = TemporalFusionTransformer(
         input_size=feature_dim,
-        hidden_size=64,
-        num_heads=4,
-        num_outputs=num_outputs,
-        num_encoder_layers=2,
+        d_model=128,
+        num_lstm_layers=2,
+        n_heads=2,
+        d_ff=256,
+        num_encoder_layers=1,
+        num_decoder_layers=1,
         dropout=0.1,
-        use_pos_enc=True
-    )
+        output_size=200,
+        use_pos_enc=True,
+        use_lstm=True
+)
+
+    def initialize_weights(model):
+        for m in model.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.kaiming_normal_(m.weight, nonlinearity='relu')
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+            elif isinstance(m, nn.LSTM):
+                for name, param in m.named_parameters():
+                    if 'weight' in name:
+                        nn.init.xavier_normal_(param)
+                    elif 'bias' in name:
+                        nn.init.constant_(param, 0)
+            elif isinstance(m, nn.Conv1d):
+                nn.init.xavier_normal_(m.weight)
+                if m.bias is not None:
+                    nn.init.constant_(m.bias, 0)
+
+    model.apply(initialize_weights)
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     train_tft(
         model=model,
         dataloader=tft_dataloader,
-        num_epochs=num_epochs,
-        learning_rate=1e-4,
+        num_epochs=50,
+        learning_rate=5e-4,
         device=device,
-        task='classification'  # o 'regression'
+        task='classification', # or 'regression'
+        grad_clip=1.0,
+        use_scheduler=True
     )
 
     print("\n[INFO] Training completato su dataset arricchito.\n")
@@ -206,34 +235,27 @@ def train_tft_main(
 
 
 def main():
-    """
-    Esegue in sequenza:
-    1) Training WGAN e generazione dati sintetici.
-    2) Training TFT sul dataset (reale + sintetico).
-    """
-    # Parametri comuni
-    DATAPATH = '/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106'
+
+    DATAPATH = './ds005106'
     SUBJECT_IDS = ['{:03d}'.format(i) for i in range(1, 52)]
 
-    #Allena WGAN e genera dati sintetici
     train_wgan_synthetic(
         datapath=DATAPATH,
         subject_ids=SUBJECT_IDS,
-        n_rank=24,           #rank per proiezione Riemann
+        n_rank=24,           
         batch_size=64,
         num_steps=1000,
         synth_file_name='synthetic_data.npz'
     )
 
-    #Allena il TFT sul dataset arricchito (reale + sintetico)
     train_tft_main(
         datapath=DATAPATH,
         subject_ids=SUBJECT_IDS,
         synth_file_name='synthetic_data.npz',
-        sequence_length=10,
-        batch_size=32,
-        num_outputs=5,
-        num_epochs=10
+        sequence_length=50,
+        batch_size=64,
+        num_outputs=200,
+        num_epochs=100
     )
 
 

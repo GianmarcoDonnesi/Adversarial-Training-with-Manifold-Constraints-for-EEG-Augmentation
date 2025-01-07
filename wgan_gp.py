@@ -9,7 +9,7 @@ import os
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 logging.basicConfig(
-    filename=os.path.join('/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106/derivatives/preprocessing', 'training.log'),
+    filename=os.path.join('./ds005106/derivatives/preprocessing', 'training.log'),
     level=logging.INFO,
     format='%(asctime)s | %(levelname)s | %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'

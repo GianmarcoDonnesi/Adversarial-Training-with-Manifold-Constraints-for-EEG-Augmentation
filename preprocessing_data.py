@@ -4,7 +4,7 @@ import pandas as pd
 import mne
 from pyriemann.estimation import Covariances
 from pyriemann.tangentspace import TangentSpace
-#from riemannian_manifold import Riemann, ProjectionCS
+from riemannian_manifold import Riemann, ProjectionCS
 from autoreject import AutoReject
 from tqdm.notebook import tqdm
 import logging
@@ -14,7 +14,7 @@ from joblib import Parallel, delayed
 
 #logging
 logging.basicConfig(
-    filename=os.path.join('/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106/derivatives/preprocessing', 'preprocessing.log'),
+    filename=os.path.join('./ds005106/derivatives/preprocessing', 'preprocessing.log'),
     level=logging.INFO,
     format='%(asctime)s %(levelname)s:%(message)s'
 )
@@ -23,15 +23,15 @@ logging.basicConfig(
 def preprocess_subject(subject_id, datapath, derivatives_path, reference, l_freq, h_freq, tmin, tmax, position=0):
     """
     Preprocessing:
-    1) Lettura raw EEG
-    2) Riferimento
-    3) Filtro FIR
-    4) ICA veloce (preprocessing "light")
-    5) Interpolazione canali rumorosi
-    6) Creazione events e epoching
+    1) Raw EEG reading
+    2) Reference
+    3) FIR filter
+    4) Fast ICA (“light” preprocessing)
+    5) Noisy channel interpolation
+    6) Event creation and epoching
     7) AutoReject
     8) Cov SPD + TangentSpace
-    9) Salvataggio .npz
+    9) Saving .npz
     """
 
     #If you want to use Class Riemann and ProjectionCS of riemannian_manifold.py file
@@ -43,7 +43,6 @@ def preprocess_subject(subject_id, datapath, derivatives_path, reference, l_freq
     total_steps = 9
     out_fn = os.path.join(derivatives_path, f"sub-{subject_id}_preprocessed_tangentspace.npz")
 
-    # Se esiste già, skip
     if os.path.exists(out_fn):
         logging.info(f"Preprocessed data for sub-{subject_id} already exists. Skipping...")
         return
@@ -55,7 +54,6 @@ def preprocess_subject(subject_id, datapath, derivatives_path, reference, l_freq
 
     with tqdm(total=total_steps, desc=f"Sub-{subject_id}", position=position, leave=False) as pbar_subj:
 
-        # 1) Lettura Raw
         raw_filename = os.path.join(subject_path, 'eeg', f"sub-{subject_id}_task-fix_eeg.set")
         behavfn = os.path.join(subject_path, 'eeg', f"sub-{subject_id}_task-fix_events.tsv")
 
@@ -69,12 +67,9 @@ def preprocess_subject(subject_id, datapath, derivatives_path, reference, l_freq
             raw = mne.io.read_raw_eeglab(raw_filename, preload=True, verbose='ERROR')
             pbar_subj.update(1)
 
-            # 2) Imposta il riferimento
             raw.set_eeg_reference(reference, verbose='ERROR')
             pbar_subj.update(1)
 
-            # 3) Filtro FIR (FFT)
-            #   Usa fir_window='hamming' e fir_design='firwin' per implementazione FFT
             raw.filter(
                 l_freq=l_freq, h_freq=h_freq,
                 method='fir',
@@ -85,14 +80,11 @@ def preprocess_subject(subject_id, datapath, derivatives_path, reference, l_freq
             )
             pbar_subj.update(1)
 
-            # 4) ICA veloce (preprocessing "light")
-            # Numero componenti ridotto per velocità. Nessun reject preliminare
             ica = mne.preprocessing.ICA(n_components=0.99, random_state=42, max_iter='auto')
             ica.fit(raw, reject=None)
             raw = ica.apply(raw)
             pbar_subj.update(1)
 
-            # 5) Rilevazione e interpolazione canali rumorosi (varianza anomala)
             data_var = np.var(raw.get_data(), axis=1)
             threshold_low = np.percentile(data_var, 1)
             threshold_high = np.percentile(data_var, 99)
@@ -106,7 +98,6 @@ def preprocess_subject(subject_id, datapath, derivatives_path, reference, l_freq
                 logging.info(f"Sub-{subject_id}: Interpolated bad channels: {bads}")
             pbar_subj.update(1)
 
-            # 6) Creazione events e epoching
             behav = pd.read_csv(behavfn, sep='\t')
             if 'stimnum' in behav.columns:
                 behav['condition_num'] = behav['stimnum']
@@ -149,7 +140,6 @@ def preprocess_subject(subject_id, datapath, derivatives_path, reference, l_freq
 
             pbar_subj.update(1)
 
-            # 7) AutoReject
             from autoreject import AutoReject
             ar = AutoReject(
                 random_state=42,
@@ -171,7 +161,6 @@ def preprocess_subject(subject_id, datapath, derivatives_path, reference, l_freq
                 return
             pbar_subj.update(1)
 
-            # 8) Cov SPD + TangentSpace
             data = epochs_clean.get_data()
             if data.size == 0:
                 pbar_subj.update(total_steps - pbar_subj.n)
@@ -198,7 +187,6 @@ def preprocess_subject(subject_id, datapath, derivatives_path, reference, l_freq
             ts_features = ts.fit_transform(cov_mats)
             pbar_subj.update(1)
 
-            # 9) Salvataggio su .npz
             stimnum = epochs_clean.events[:, 2]
             onsets_sec = epochs_clean.events[:, 0] / srate
             chan_labels = epochs_clean.ch_names
@@ -224,17 +212,15 @@ def preprocess_subject(subject_id, datapath, derivatives_path, reference, l_freq
             logging.error(f"Sub-{subject_id}: Failed. Error: {e}\n{tb}")
             pbar_subj.update(total_steps - pbar_subj.n)
 
-# Path del dataset
-datapath = '/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106'
+
+datapath = './ds005106'
 derivatives_path = os.path.join(datapath, 'derivatives', 'preprocessing')
 os.makedirs(derivatives_path, exist_ok=True)
 
-# Parametri di filtraggio ed epoching
-l_freq, h_freq = 0.5, 40.0  # 8-30hz To-Do
+l_freq, h_freq = 0.5, 40.0  
 tmin, tmax = 0.0, 0.5
 reference = 'average'
 
-# Lista dei soggetti da preprocessare
 subject_ids = ['{:03d}'.format(i) for i in range(1, 52)]
 
 Parallel(n_jobs=4)(

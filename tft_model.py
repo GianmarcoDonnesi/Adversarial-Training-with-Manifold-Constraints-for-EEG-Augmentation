@@ -1,3 +1,4 @@
+import os
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -5,52 +6,45 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from prepare_tft_data import load_preprocessed_data, prepare_tft_data
 from tqdm import tqdm
-import logging  # oppure: from tqdm import tqdm
+import logging 
 
 logging.basicConfig(
-    filename=os.path.join('/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106/derivatives/preprocessing', 'tft_training.log'),
+    filename=os.path.join('./ds005106/derivatives/preprocessing', 'tft_training.log'),
     level=logging.INFO,
     format='%(asctime)s | %(levelname)s | %(message)s',
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-#1) Gated Residual Network (GRN)
 
 class GatedResidualNetwork(nn.Module):
-    """
-    Gated Residual Network come descritto nel paper TFT.
-    - Esegue una trasformazione non lineare su input e poi un gating,
-      con skip connection verso l'uscita.
-    """
+  
     def __init__(self, input_size, hidden_size, output_size, dropout=0.1):
         super().__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, output_size)
 
-        # gating + skip
+
         self.elu = nn.ELU()
         self.dropout = nn.Dropout(dropout)
         self.gate = nn.Linear(output_size, output_size)
         self.sigmoid = nn.Sigmoid()
 
-        # per lo skip connection
+
         if input_size != output_size:
-            # Proiezione del residuo (skip)
+            
             self.skip_proj = nn.Linear(input_size, output_size)
         else:
             self.skip_proj = None
 
     def forward(self, x):
-        # x.shape = (batch_size, seq_length, input_size) oppure (batch_size, input_size)
+        
         hidden = self.fc1(x)
         hidden = self.elu(hidden)
         hidden = self.dropout(hidden)
         hidden = self.fc2(hidden)
 
-        # gating
         gate = self.sigmoid(self.gate(hidden))
 
-        # skip connection
         if self.skip_proj is not None:
             x_skip = self.skip_proj(x)
         else:
@@ -58,251 +52,243 @@ class GatedResidualNetwork(nn.Module):
 
         return (hidden * gate) + (1 - gate) * x_skip
 
+class SimpleFeedForward(nn.Module):
 
+    def __init__(self, d_model, d_ff, dropout=0.1):
+        super().__init__()
+        self.linear1 = nn.Linear(d_model, d_ff)
+        self.linear2 = nn.Linear(d_ff, d_model)
+        self.dropout = nn.Dropout(dropout)
+        self.layernorm = nn.LayerNorm(d_model)
+        self.activation = nn.ReLU()
 
-#2) Multi-Head Attention
+    def forward(self, x):
+    
+        residual = x
+        out = self.linear1(x)
+        out = self.activation(out)
+        out = self.dropout(out)
+        out = self.linear2(out)
+        out = self.dropout(out)
+
+        out = self.layernorm(residual + out)
+        return out
 
 
 class MultiHeadAttention(nn.Module):
-    """
-    MultiHeadAttention base per TFT.
-    Utilizza la built-in nn.MultiheadAttention di PyTorch con batch_first=True.
-    """
-    def __init__(self, d_model, n_heads, dropout=0.1):
+
+    def __init__(self, d_model, n_heads=4, dropout=0.1):
         super().__init__()
         self.mha = nn.MultiheadAttention(embed_dim=d_model, num_heads=n_heads,
                                          dropout=dropout, batch_first=True)
         self.dropout = nn.Dropout(dropout)
         self.layernorm = nn.LayerNorm(d_model)
 
-    def forward(self, x, mask=None):
-        """
-        x.shape = (batch_size, seq_length, d_model)
-        """
-        attn_output, _ = self.mha(x, x, x, attn_mask=mask, need_weights=False)
+    def forward(self, x, attn_mask=None):
+       
+        attn_output, _ = self.mha(x, x, x, attn_mask=attn_mask, need_weights=False)
         out = self.dropout(attn_output)
-        out = self.layernorm(x + out)  # residuo
+        out = self.layernorm(x + out) 
         return out
 
 
-
-#3) Positional Encoding (sin/cos standard)
-
 class PositionalEncoding(nn.Module):
-    """
-    Implementazione standard di Positional Encoding (Transformer).
-    """
+    
     def __init__(self, d_model, max_len=5000):
         super().__init__()
         pe = torch.zeros(max_len, d_model)
         position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
         div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-torch.log(torch.tensor(10000.0)) / d_model))
 
-        pe[:, 0::2] = torch.sin(position * div_term)  # dimensioni pari
-        pe[:, 1::2] = torch.cos(position * div_term)  # dimensioni dispari
-        pe = pe.unsqueeze(0)  # shape = (1, max_len, d_model)
+        pe[:, 0::2] = torch.sin(position * div_term)  
+        pe[:, 1::2] = torch.cos(position * div_term)  
+        pe = pe.unsqueeze(0)  
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-        """
-        x.shape = (batch_size, seq_length, d_model)
-        Ritorna x + positional_encoding
-        """
+       
         seq_len = x.size(1)
-        # Aggiunge la PE alle feature
-        # self.pe[:, :seq_len, :] => shape = (1, seq_len, d_model)
         x = x + self.pe[:, :seq_len, :].to(x.device)
         return x
 
 
-#4) ENCODER + DECODER LSTM
+class TFTEncoderLayer(nn.Module):
+  
+    def __init__(self, d_model, n_heads=4, d_ff=256, dropout=0.1):
+        super().__init__()
+        self.self_attn = MultiHeadAttention(d_model, n_heads, dropout=dropout)
+        self.ff = SimpleFeedForward(d_model, d_ff=d_ff, dropout=dropout)
+        self.grn = GatedResidualNetwork(d_model, d_model, d_model, dropout=dropout)
+
+    def forward(self, x, mask=None):
+     
+        x = self.self_attn(x, attn_mask=mask)
+        x = self.ff(x)
+        x = self.grn(x)
+        
+        return x
 
 class TFTEncoder(nn.Module):
-    """
-    Encoder del TFT con:
-    - Multi-layer LSTM (num_encoder_layers) per catturare info temporali
-    - (Opzionale) Positional Encoding
-    - Multi-Head Self-Attention
-    - Gated Residual post-attn
-    """
+   
     def __init__(self,
                  input_size,
-                 hidden_size=64,
-                 num_heads=4,
-                 dropout=0.1,
+                 d_model=128,
+                 num_lstm_layers=2,
+                 n_heads=4,
+                 d_ff=256,
                  num_encoder_layers=2,
-                 use_positional_encoding=True):
+                 dropout=0.1,
+                 use_positional_encoding=True,
+                 use_lstm=True):
         super().__init__()
-        self.hidden_size = hidden_size
-        self.num_encoder_layers = num_encoder_layers
-        self.use_positional_encoding = use_positional_encoding
+        self.use_lstm = use_lstm
+        self.use_pos_enc = use_positional_encoding
+        self.d_model = d_model
 
-        # LSTM multi-layer
-        self.lstm = nn.LSTM(
-            input_size=input_size,
-            hidden_size=hidden_size,
-            num_layers=num_encoder_layers,
-            batch_first=True,
-            bidirectional=False
-        )
-
-        # Positional Encoding (opzionale)
-        if self.use_positional_encoding:
-            self.pos_enc = PositionalEncoding(d_model=hidden_size)
+        
+        if input_size != d_model:
+            self.feature_proj = nn.Linear(input_size, d_model)
         else:
-            self.pos_enc = None
+            self.feature_proj = None
 
-        # Self-attention + residual
-        self.self_attn = MultiHeadAttention(d_model=hidden_size, n_heads=num_heads, dropout=dropout)
+        if self.use_lstm:
+            self.lstm = nn.LSTM(
+                input_size=d_model,
+                hidden_size=d_model,
+                num_layers=num_lstm_layers,
+                batch_first=True,
+                bidirectional=False
+            )
 
-        # GRN post-attn
-        self.grn_post_attn = GatedResidualNetwork(
-            input_size=hidden_size,
-            hidden_size=hidden_size,
-            output_size=hidden_size,
-            dropout=dropout
-        )
+        if self.use_pos_enc:
+            self.pos_enc = PositionalEncoding(d_model, max_len=10000)
 
-    def forward(self, x):
-        """
-        x.shape = (batch_size, seq_length, input_size)
-        Ritorna hidden_seq, (h_n, c_n) come ultimi stati LSTM
-        """
-        # LSTM multi-layer
-        lstm_out, (h_n, c_n) = self.lstm(x)
-        # lstm_out.shape = (batch_size, seq_length, hidden_size)
+        self.layers = nn.ModuleList([
+            TFTEncoderLayer(d_model, n_heads, d_ff, dropout)
+            for _ in range(num_encoder_layers)
+        ])
 
-        # Positional Encoding
-        if self.pos_enc is not None:
-            lstm_out = self.pos_enc(lstm_out)
+    def forward(self, x, mask=None):
+    
+        if self.feature_proj is not None:
+            x = self.feature_proj(x) 
 
-        # Self-Attention
-        attn_out = self.self_attn(lstm_out)
+        if self.use_lstm:
+            x, (h_n, c_n) = self.lstm(x) 
+        else:
+            h_n = None
+            c_n = None
 
-        # Gated Residual
-        enc_out = self.grn_post_attn(attn_out)
+        if self.use_pos_enc:
+            x = self.pos_enc(x)
 
-        return enc_out, (h_n, c_n)
+        for layer in self.layers:
+            x = layer(x, mask=mask)
+
+        return x, (h_n, c_n)
 
 
 class TFTDecoder(nn.Module):
-    """
-    Decoder LSTM che riceve l'ultimo hidden state dell'encoder
-    e produce la predizione.
-    """
-    def __init__(self, hidden_size=64, output_size=2, dropout=0.1):
+   
+    def __init__(self,
+                 d_model=128,
+                 output_size=200,
+                 num_decoder_layers=1,
+                 dropout=0.1):
         super().__init__()
-        self.hidden_size = hidden_size
+        self.d_model = d_model
         self.output_size = output_size
 
-        # Decoder LSTM (singolo layer)
+
         self.lstm = nn.LSTM(
-            input_size=hidden_size,
-            hidden_size=hidden_size,
-            num_layers=1,
+            input_size=d_model,
+            hidden_size=d_model,
+            num_layers=num_decoder_layers,
             batch_first=True
         )
 
-        # GRN feedforward finale
-        self.grn_ff = GatedResidualNetwork(
-            input_size=self.hidden_size,
-            hidden_size=self.hidden_size,
-            output_size=self.hidden_size,
-            dropout=dropout
-        )
-
-        # Proiezione finale
-        self.output_proj = nn.Linear(hidden_size, output_size)
+        self.grn_ff = GatedResidualNetwork(d_model, d_model, d_model, dropout=dropout)
+        self.output_proj = nn.Linear(d_model, output_size)
 
     def forward(self, enc_out, encoder_hidden):
-        """
-        enc_out: (batch_size, seq_length, hidden_size) [non sempre usato in uno schema semplificato]
-        encoder_hidden: (h_n, c_n) dimensioni => (num_layers, batch_size, hidden_size)
-        Ritorna logits => (batch_size, output_size)
+       
+        if encoder_hidden[0] is not None:
+            h_0 = encoder_hidden[0][-1].unsqueeze(0)  
+            c_0 = encoder_hidden[1][-1].unsqueeze(0)  
+        else:
+            
+            batch_size = enc_out.size(0)
+            h_0 = torch.zeros((1, batch_size, self.d_model), device=enc_out.device)
+            c_0 = torch.zeros((1, batch_size, self.d_model), device=enc_out.device)
 
-        """
-        # Usiamo lo stato hidden dell'encoder come initial state del decoder
-        # h_n shape: (num_encoder_layers, batch_size, hidden_size)
-        # Per la LSTM decoder, prendiamo l'ultimo layer dell'encoder:
-        h_0 = encoder_hidden[0][-1].unsqueeze(0)
-        c_0 = encoder_hidden[1][-1].unsqueeze(0)
-
-        batch_size, seq_len, _ = enc_out.shape
-        context_vec = torch.mean(enc_out, dim=1, keepdim=True)  # (batch_size, 1, hidden_size)
+        context_vec = enc_out.mean(dim=1, keepdim=True)  
 
         dec_out, (h_dec, c_dec) = self.lstm(context_vec, (h_0, c_0))
-        # dec_out.shape = (batch_size, 1, hidden_size)
 
-        # GRN feedforward
-        ff_out = self.grn_ff(dec_out)  # shape (batch_size, 1, hidden_size)
-
-        logits = self.output_proj(ff_out).squeeze(1)  # (batch_size, output_size)
-
+        ff_out = self.grn_ff(dec_out)  
+        logits = self.output_proj(ff_out).squeeze(1) 
         return logits
 
 
 
-class TFTRefinedModel(nn.Module):
-    """
-    Versione raffinata del TFT:
-    - Encoder LSTM multilayer + Positional Encoding + Self-Attn
-    - Decoder LSTM semplice (1 step)
-    - Gated Residual Networks
-    - Output finale (classif/regressione)
-    """
+class TemporalFusionTransformer(nn.Module):
+  
     def __init__(self,
-                 input_size,       # dimensione input di ogni time step
-                 hidden_size=64,
-                 num_heads=4,
-                 num_outputs=2,
+                 input_size,
+                 d_model=128,
+                 num_lstm_layers=2,
+                 n_heads=4,
+                 d_ff=256,
                  num_encoder_layers=2,
+                 num_decoder_layers=1,
                  dropout=0.1,
-                 use_pos_enc=True):
+                 output_size=200,
+                 use_pos_enc=True,
+                 use_lstm=True):
+
         super().__init__()
+
         self.encoder = TFTEncoder(
             input_size=input_size,
-            hidden_size=hidden_size,
-            num_heads=num_heads,
-            dropout=dropout,
+            d_model=d_model,
+            num_lstm_layers=num_lstm_layers,
+            n_heads=n_heads,
+            d_ff=d_ff,
             num_encoder_layers=num_encoder_layers,
-            use_positional_encoding=use_pos_enc
+            dropout=dropout,
+            use_positional_encoding=use_pos_enc,
+            use_lstm=use_lstm
         )
+
         self.decoder = TFTDecoder(
-            hidden_size=hidden_size,
-            output_size=num_outputs,
+            d_model=d_model,
+            output_size=output_size,
+            num_decoder_layers=num_decoder_layers,
             dropout=dropout
         )
 
-    def forward(self, x):
-        """
-        x.shape = (batch_size, seq_length, input_size)
-        """
-        enc_out, (h_n, c_n) = self.encoder(x)  # (batch_size, seq_len, hidden_size), (h_n, c_n)
-        logits = self.decoder(enc_out, (h_n, c_n))  # (batch_size, num_outputs)
+    def forward(self, x, mask=None):
+       
+        enc_out, (h_n, c_n) = self.encoder(x, mask=mask)  
+        logits = self.decoder(enc_out, (h_n, c_n))        
         return logits
 
 
-def train_tft(model, dataloader, num_epochs=10, learning_rate=1e-4, device='cuda', task='classification'):
-    """
-    Addestra il modello TFT.
-
-    Parameters:
-    - model (nn.Module): Il modello TFT da addestrare.
-    - dataloader (DataLoader): DataLoader per l'addestramento.
-    - num_epochs (int): Numero di epoche.
-    - learning_rate (float): Tasso di apprendimento.
-    - device (torch.device): Dispositivo su cui addestrare ('cpu' o 'cuda').
-    - task (str): 'classification' o 'regression'.
-    """
+def train_tft(model, dataloader, num_epochs=20, learning_rate=1e-3, device='cuda', task='classification', grad_clip=1.0, use_scheduler=True):
+   
     model.to(device)
     if task == 'classification':
         criterion = nn.CrossEntropyLoss()
     elif task == 'regression':
         criterion = nn.MSELoss()
     else:
-        raise ValueError("Il task deve essere 'classification' o 'regression'.")
+        raise ValueError("task: 'classification' or 'regression'.")
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    if use_scheduler:
+        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=True)
+    else:
+        scheduler = None
 
     for epoch in range(num_epochs):
         model.train()
@@ -313,6 +299,7 @@ def train_tft(model, dataloader, num_epochs=10, learning_rate=1e-4, device='cuda
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}", leave=False)
 
         for batch_sequences, batch_labels in progress_bar:
+            torch.cuda.synchronize()
             batch_sequences = batch_sequences.to(device)
             batch_labels = batch_labels.to(device)
 
@@ -328,6 +315,8 @@ def train_tft(model, dataloader, num_epochs=10, learning_rate=1e-4, device='cuda
                 loss = criterion(outputs, batch_labels.float())
 
             loss.backward()
+            torch.cuda.synchronize()
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
             optimizer.step()
 
             running_loss += loss.item()
@@ -345,5 +334,5 @@ def train_tft(model, dataloader, num_epochs=10, learning_rate=1e-4, device='cuda
             print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
             logging.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
 
-    print("Addestramento completato.")
-    logging.info("Addestramento completato.")
+    print("Training complete.")
+    logging.info("Training complete.")

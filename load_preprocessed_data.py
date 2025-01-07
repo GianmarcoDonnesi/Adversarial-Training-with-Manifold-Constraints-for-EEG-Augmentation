@@ -1,15 +1,9 @@
 import os
 import numpy as np
-import pandas as pd
 from tqdm.notebook import tqdm
 
 def load_preprocessed_data(subject_ids, derivatives_path):
-    """
-    Carica i dati preprocessati da file .npz per tutti i soggetti.
-
-    Returns:
-    - dict: Un dizionario contenente tutte le features e le etichette combinate.
-    """
+   
     all_ts_features = []
     all_labels = []
     all_subjects = []
@@ -62,7 +56,7 @@ def load_preprocessed_data(subject_ids, derivatives_path):
 
 if __name__ == "__main__":
 
-    datapath = '/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106'
+    datapath = './ds005106'
     derivatives_path = os.path.join(datapath, 'derivatives', 'preprocessing')
 
     subject_ids = ['{:03d}'.format(i) for i in range(1, 52)]
