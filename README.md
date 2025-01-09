@@ -1,6 +1,6 @@
 # Adversarial-Training-with-Manifold-Constraints-for-EEG-Augmentation
 
-Welcome to the repository containing the code developed for the **Elective in AI (EAI)** course (A.Y. 24/25). This project focuses on generating **synthetic EEG data** using a **Wasserstein GAN with Gradient Penalty (WGAN-GP)** to enhance the performance of a **Temporal Fusion Transformer (TFT)** for classification and regression tasks on EEG signals. This repository contains scripts for data preprocessing, WGAN-GP training, TFT implementation, and validation, offering a complete pipeline for advanced EEG data augmentation and analysis.
+Welcome to the repository containing the code developed for the **Elective in AI (EAI)** course (A.Y. 24/25). This project focuses on generating **synthetic EEG data** using a **Wasserstein GAN with Gradient Penalty (WGAN-GP)** to enhance the performance of a **Temporal Fusion Transformer (TFT)** for classification and regression tasks on EEG signals. This repository contains scripts for data preprocessing, WGAN-GP implementation, with its training and validation part, TFT implementation, and validation, offering a complete pipeline for advanced EEG data augmentation and analysis.
 
 ---
 
@@ -96,16 +96,16 @@ Generate realistic synthetic EEG data to enhance TFT training.
 
 ### **Architecture**
 - **Generator (G)**: Takes a noise vector (`nz`) as input and generates synthetic EEG sequences of size `[batch_size, 1, 528]`.
-- **Discriminator (D)**: Evaluates the authenticity of EEG sequences (real or synthetic) using 1D convolutions and Batch Normalization.
-- **Gradient Penalty (GP)**: Stabilizes training by imposing a gradient constraint.
+- **Discriminator (D)**: Evaluates the authenticity of EEG sequences (real or synthetic) using 1D Convolutions and Batch Normalization.
+- **Training with Gradient Penalty (GP)**: In the training phase, a gradient constraint is imposed so that it stabilizes.
 
 ### **Key Scripts**
 - **`prepare_wgan_data.py`**: 
   - Normalizes features using **z-score**.
   - Creates a `DataLoader` for WGAN training.
 - **`wgan_gp.py`**:
-  - Defines generator and discriminator architectures.
-  - Includes training and inference functions.
+  - Implements the **WGAN-GP** in Pytorch.
+  - Definitions of **Generator**, **Discriminator** and their functions
 
 ---
 
@@ -209,10 +209,10 @@ python validate_models.py
 ## **Validation Metrics**
 
 1. **For WGAN-GP**:
-   - **FID** (Fréchet Inception Distance)  
-   - **IS** (Inception Score)  
-   - **Precision & Recall** (for sample diversity)  
-   - **Visual Inspection** (optional, to check signal plausibility)
+   - **FID** (Fréchet Inception Distance)
+   - **IS** (Inception Score)
+   - **KID** (Kernel Inception Distance)
+   - **Precision & Recall** (for sample diversity)
 
 2. **For TFT**:
    - **Accuracy**  
