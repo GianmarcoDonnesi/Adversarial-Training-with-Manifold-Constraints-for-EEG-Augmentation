@@ -7,3 +7,4 @@ pandas
 autoreject
 tqdm
 faiss-gpu
+faiss-cpu

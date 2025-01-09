@@ -3,10 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.utils.data import DataLoader
-from prepare_tft_data import load_preprocessed_data, prepare_tft_data
 from tqdm import tqdm
-import logging 
+import logging  
 
 logging.basicConfig(
     filename=os.path.join('./ds005106/derivatives/preprocessing', 'tft_training.log'),
@@ -17,27 +15,25 @@ logging.basicConfig(
 
 
 class GatedResidualNetwork(nn.Module):
-  
+
     def __init__(self, input_size, hidden_size, output_size, dropout=0.1):
         super().__init__()
         self.fc1 = nn.Linear(input_size, hidden_size)
         self.fc2 = nn.Linear(hidden_size, output_size)
-
 
         self.elu = nn.ELU()
         self.dropout = nn.Dropout(dropout)
         self.gate = nn.Linear(output_size, output_size)
         self.sigmoid = nn.Sigmoid()
 
-
         if input_size != output_size:
-            
+
             self.skip_proj = nn.Linear(input_size, output_size)
         else:
             self.skip_proj = None
 
     def forward(self, x):
-        
+       
         hidden = self.fc1(x)
         hidden = self.elu(hidden)
         hidden = self.dropout(hidden)
@@ -76,7 +72,7 @@ class SimpleFeedForward(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-
+  
     def __init__(self, d_model, n_heads=4, dropout=0.1):
         super().__init__()
         self.mha = nn.MultiheadAttention(embed_dim=d_model, num_heads=n_heads,
@@ -85,15 +81,15 @@ class MultiHeadAttention(nn.Module):
         self.layernorm = nn.LayerNorm(d_model)
 
     def forward(self, x, attn_mask=None):
-       
+    
         attn_output, _ = self.mha(x, x, x, attn_mask=attn_mask, need_weights=False)
         out = self.dropout(attn_output)
-        out = self.layernorm(x + out) 
+        out = self.layernorm(x + out)  
         return out
 
 
 class PositionalEncoding(nn.Module):
-    
+   
     def __init__(self, d_model, max_len=5000):
         super().__init__()
         pe = torch.zeros(max_len, d_model)
@@ -106,14 +102,12 @@ class PositionalEncoding(nn.Module):
         self.register_buffer('pe', pe)
 
     def forward(self, x):
-       
         seq_len = x.size(1)
         x = x + self.pe[:, :seq_len, :].to(x.device)
         return x
 
 
 class TFTEncoderLayer(nn.Module):
-  
     def __init__(self, d_model, n_heads=4, d_ff=256, dropout=0.1):
         super().__init__()
         self.self_attn = MultiHeadAttention(d_model, n_heads, dropout=dropout)
@@ -121,18 +115,15 @@ class TFTEncoderLayer(nn.Module):
         self.grn = GatedResidualNetwork(d_model, d_model, d_model, dropout=dropout)
 
     def forward(self, x, mask=None):
-     
         x = self.self_attn(x, attn_mask=mask)
         x = self.ff(x)
         x = self.grn(x)
-        
         return x
 
 class TFTEncoder(nn.Module):
-   
     def __init__(self,
                  input_size,
-                 d_model=128,
+                 d_model=64,
                  num_lstm_layers=2,
                  n_heads=4,
                  d_ff=256,
@@ -145,7 +136,6 @@ class TFTEncoder(nn.Module):
         self.use_pos_enc = use_positional_encoding
         self.d_model = d_model
 
-        
         if input_size != d_model:
             self.feature_proj = nn.Linear(input_size, d_model)
         else:
@@ -169,12 +159,12 @@ class TFTEncoder(nn.Module):
         ])
 
     def forward(self, x, mask=None):
-    
+  
         if self.feature_proj is not None:
-            x = self.feature_proj(x) 
-
+            x = self.feature_proj(x)  
+       
         if self.use_lstm:
-            x, (h_n, c_n) = self.lstm(x) 
+            x, (h_n, c_n) = self.lstm(x)  
         else:
             h_n = None
             c_n = None
@@ -189,7 +179,6 @@ class TFTEncoder(nn.Module):
 
 
 class TFTDecoder(nn.Module):
-   
     def __init__(self,
                  d_model=128,
                  output_size=200,
@@ -211,31 +200,31 @@ class TFTDecoder(nn.Module):
         self.output_proj = nn.Linear(d_model, output_size)
 
     def forward(self, enc_out, encoder_hidden):
-       
+        
         if encoder_hidden[0] is not None:
+            
             h_0 = encoder_hidden[0][-1].unsqueeze(0)  
             c_0 = encoder_hidden[1][-1].unsqueeze(0)  
         else:
-            
+          
             batch_size = enc_out.size(0)
             h_0 = torch.zeros((1, batch_size, self.d_model), device=enc_out.device)
             c_0 = torch.zeros((1, batch_size, self.d_model), device=enc_out.device)
 
-        context_vec = enc_out.mean(dim=1, keepdim=True)  
+        context_vec = enc_out.mean(dim=1, keepdim=True) 
 
         dec_out, (h_dec, c_dec) = self.lstm(context_vec, (h_0, c_0))
-
-        ff_out = self.grn_ff(dec_out)  
-        logits = self.output_proj(ff_out).squeeze(1) 
+       
+        ff_out = self.grn_ff(dec_out) 
+        logits = self.output_proj(ff_out).squeeze(1)  
         return logits
 
 
 
 class TemporalFusionTransformer(nn.Module):
-  
     def __init__(self,
                  input_size,
-                 d_model=128,
+                 d_model=64,
                  num_lstm_layers=2,
                  n_heads=4,
                  d_ff=256,
@@ -268,25 +257,23 @@ class TemporalFusionTransformer(nn.Module):
         )
 
     def forward(self, x, mask=None):
-       
         enc_out, (h_n, c_n) = self.encoder(x, mask=mask)  
-        logits = self.decoder(enc_out, (h_n, c_n))        
+        logits = self.decoder(enc_out, (h_n, c_n)) 
         return logits
 
 
 def train_tft(model, dataloader, num_epochs=20, learning_rate=1e-3, device='cuda', task='classification', grad_clip=1.0, use_scheduler=True):
-   
     model.to(device)
     if task == 'classification':
         criterion = nn.CrossEntropyLoss()
     elif task == 'regression':
         criterion = nn.MSELoss()
     else:
-        raise ValueError("task: 'classification' or 'regression'.")
+        raise ValueError("Il task deve essere 'classification' o 'regression'.")
 
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     if use_scheduler:
-        scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3, verbose=True)
+        scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-3, steps_per_epoch=len(dataloader), epochs=num_epochs, pct_start=0.3, anneal_strategy='cos', cycle_momentum=False )
     else:
         scheduler = None
 
@@ -318,6 +305,7 @@ def train_tft(model, dataloader, num_epochs=20, learning_rate=1e-3, device='cuda
             torch.cuda.synchronize()
             nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
             optimizer.step()
+            scheduler.step()
 
             running_loss += loss.item()
             if task == 'classification':
@@ -334,5 +322,5 @@ def train_tft(model, dataloader, num_epochs=20, learning_rate=1e-3, device='cuda
             print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
             logging.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
 
-    print("Training complete.")
-    logging.info("Training complete.")
+    print("Addestramento completato.")
+    logging.info("Addestramento completato.")

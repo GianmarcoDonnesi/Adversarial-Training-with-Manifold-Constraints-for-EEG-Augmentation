@@ -12,7 +12,6 @@ import traceback
 from joblib import Parallel, delayed
 
 
-#logging
 logging.basicConfig(
     filename=os.path.join('./ds005106/derivatives/preprocessing', 'preprocessing.log'),
     level=logging.INFO,
