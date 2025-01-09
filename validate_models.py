@@ -9,33 +9,23 @@ from pyriemann.utils.distance import distance_riemann
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, confusion_matrix
-from prepare_wgan_data import EEGDatasetWGAN
-from wgan_gp import generate_signals 
+from sklearn.neighbors import NearestNeighbors
+from wgan_gp import WGAN_GP_Generator, WGAN_GP_Discriminator
 from tft_model import TemporalFusionTransformer
+from load_preprocessed_data import load_preprocessed_data
 from prepare_tft_data import prepare_tft_data
+from scipy.linalg import sqrtm
+
 
 
 def riemannian_distance_metric(real_data: np.ndarray, gen_data: np.ndarray) -> float:
-    """
-    Calcola la distanza Riemanniana media tra la covarianza media dei real_data e gen_data.
-    
-    Parametri:
-    - real_data:  shape (N, C, T) => N epoche, C canali, T campioni
-    - gen_data:   shape (M, C, T)
-    
-    Ritorna:
-    - dist_rg: Distanza Riemanniana (float)
-    """
-    if Covariances is None or distance_riemann is None:
-        print("[ERROR] PyRiemann non disponibile, impossibile calcolare la distanza Riemanniana.")
-        return None
 
     # Stima covarianze SPD
-    cov_r = Covariances(estimator='oas').fit_transform(real_data)  
-    cov_g = Covariances(estimator='oas').fit_transform(gen_data)   
+    cov_r = Covariances(estimator='oas').fit_transform(real_data)
+    cov_g = Covariances(estimator='oas').fit_transform(gen_data)
 
-    cov_r_mean = np.mean(cov_r, axis=0)  
-    cov_g_mean = np.mean(cov_g, axis=0)  
+    cov_r_mean = np.mean(cov_r, axis=0)
+    cov_g_mean = np.mean(cov_g, axis=0)
 
     # Distanza Riemanniana tra le due SPD medie
     dist_rg = distance_riemann(cov_r_mean, cov_g_mean)
@@ -43,14 +33,7 @@ def riemannian_distance_metric(real_data: np.ndarray, gen_data: np.ndarray) -> f
 
 
 def classify_real_vs_fake(real_data: np.ndarray, gen_data: np.ndarray) -> float:
-    """
-    Addestra un classificatore (LogisticRegression) per distinguere
-    real_data vs gen_data e valuta l'accuracy.
     
-    Ritorna:
-    - accuracy (float): se ~0.5 => real e fake difficili da distinguere
-                        se ~1.0 => generati facilmente distinguibili
-    """
     # Etichette: 1 = reale, 0 = fake
     y_real = np.ones(len(real_data))
     y_fake = np.zeros(len(gen_data))
@@ -77,7 +60,17 @@ def classify_real_vs_fake(real_data: np.ndarray, gen_data: np.ndarray) -> float:
     return acc
 
 
-def evaluate_wgan_eeg(real_data: np.ndarray, gen_data: np.ndarray):
+def evaluate_wgan_eeg(real_data, gen_data, gen_model_path, disc_model_path, metrics=['FID', 'IS', 'KID', 'Precision and Recall'], device='cuda'):
+    generator = WGAN_GP_Generator(nz=300, ngf=100, s_length=50, device=device).to(device)
+    generator.load_state_dict(torch.load(gen_model_path, map_location=device, weights_only=True))
+    generator.eval()
+
+    discriminator = WGAN_GP_Discriminator(ndf=64, gp_scale=50).to(device)
+    discriminator.load_state_dict(torch.load(disc_model_path, map_location=device, weights_only=True))
+    discriminator.eval()
+
+    synthetic_data = generator.forward_fake_signals(torch.randn(len(gen_data), 300, device=device)).detach().cpu().numpy()
+
     results = {}
 
     dist_riem = riemannian_distance_metric(real_data, gen_data)
@@ -86,40 +79,36 @@ def evaluate_wgan_eeg(real_data: np.ndarray, gen_data: np.ndarray):
     acc_rf = classify_real_vs_fake(real_data, gen_data)
     results['RealVsFakeAccuracy'] = acc_rf
 
+
     return results
 
 
-def validate_tft(
-    model_path: str,
-    loaded_data_test: dict,
-    sequence_length: int = 10,
-    batch_size: int = 64,
-    device: str = 'cuda'
-):
+def validate_tft(model_path, loaded_data_test, label_encoder, sequence_length=10, batch_size=64, device='cuda'):
 
-    test_dataloader = prepare_tft_data(
+    test_dataloader, _ = prepare_tft_data(
         loaded_data_test,
         sequence_length=sequence_length,
         batch_size=batch_size,
-        shuffle=False
+        shuffle=False,
+        n_augments=0
     )
 
-  
+
     model = TemporalFusionTransformer(
-        input_size=512,   
+        input_size=512,
         d_model=128,
         num_lstm_layers=2,
         n_heads=4,
         d_ff=256,
         num_encoder_layers=2,
         num_decoder_layers=1,
-        dropout=0.1,
-        output_size=200,  
+        dropout=0.2,
+        output_size=len(label_encoder.classes_),
         use_pos_enc=True,
         use_lstm=True
     ).to(device)
 
-    model.load_state_dict(torch.load(model_path, map_location=device))
+    model.load_state_dict(torch.load(model_path, map_location=device, weights_only=True))
     model.eval()
 
     all_preds = []
@@ -130,7 +119,7 @@ def validate_tft(
             batch_sequences = batch_sequences.to(device)
             batch_labels = batch_labels.to(device)
 
-            outputs = model(batch_sequences) 
+            outputs = model(batch_sequences)
             preds = torch.argmax(outputs, dim=1)
 
             all_preds.append(preds.cpu().numpy())
@@ -154,6 +143,7 @@ def validate_tft(
 
 
 if __name__ == "__main__":
+
     logging.basicConfig(
         filename="validate_models.log",
         level=logging.INFO,
@@ -161,23 +151,91 @@ if __name__ == "__main__":
         datefmt="%Y-%m-%d %H:%M:%S"
     )
 
-    real_data = np.random.randn(500, 32, 128) 
-    gen_data = np.random.randn(500, 32, 128)  
+    logging.info("Inizio validazione dei modelli.")
+    # Percorso dei dati e dei modelli
+    datapath = '/content/drive/MyDrive/AIRO/Projects/EAI_Project/ds005106'
+    derivatives_path = os.path.join(datapath, 'derivatives', 'preprocessing')
 
-    wgan_eeg_results = evaluate_wgan_eeg(real_data, gen_data)
-    print("[WGAN EEG Validation Results]", wgan_eeg_results)
+    # Carica i dati
+    subject_ids = ['{:03d}'.format(i) for i in range(1, 52)]
+    loaded_data_test = load_preprocessed_data(subject_ids, derivatives_path)
 
-    loaded_data_test = {
-        'ts_features': np.random.randn(1000, 512),
-        'labels': np.random.randint(0, 200, size=(1000,))
-    }
-    tft_model_path = "tft_model.pth"
 
-    tft_results = validate_tft(
-        model_path=tft_model_path,
-        loaded_data_test=loaded_data_test,
-        sequence_length=10,
-        batch_size=64,
-        device="cuda" if torch.cuda.is_available() else "cpu"
-    )
-    print("[TFT Validation Results]", tft_results)
+    # Estrai dati reali preprocessati
+    real_data = loaded_data['ts_features']
+    real_labels = loaded_data['labels']
+
+    n_channels = 32 
+    n_frames = 16    
+    total_features = n_channels * n_frames
+
+    real_data_cut = real_data[:, :total_features]
+
+    # Normalizzazione Z-Score
+    mean = real_data_cut.mean(axis=0)
+    std = real_data_cut.std(axis=0) + 1e-8
+    real_data_zscore = (real_data_cut - mean) / std
+
+    # Reshape dei dati reali per ottenere (n_trials, n_channels, n_frames)
+    real_data_reshaped = real_data_zscore.reshape(-1, n_channels, n_frames)
+    logging.info(f"Dati reali caricati e reshaped. Shape: {real_data_reshaped.shape}")
+
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+    try:
+        # **1. Validazione WGAN-GP**
+        logging.info("Inizio validazione WGAN-GP.")
+        
+        gen_model_path = os.path.join(derivatives_path, "wgan_generator.pth")
+        disc_model_path = os.path.join(derivatives_path, "wgan_discriminator.pth")
+
+        # Esegui la validazione WGAN-GP
+        wgan_eeg_results = evaluate_wgan_eeg(
+            real_data=real_data_reshaped,
+            gen_data=real_data_reshaped,
+            gen_model_path=gen_model_path,
+            disc_model_path=disc_model_path,
+            metrics=['FID', 'IS', 'KID', 'Precision and Recall'],
+            device=device
+        )
+        logging.info(f"Risultati validazione WGAN-GP: {wgan_eeg_results}")
+        print("[WGAN-GP Validation Results]", wgan_eeg_results)
+
+    except Exception as e:
+        logging.error(f"Errore durante la validazione WGAN-GP: {e}", exc_info=True)
+        print("[ERRORE] Validazione WGAN-GP fallita.")
+
+    try:
+        # **2. Validazione TFT**
+        logging.info("Inizio validazione TFT.")
+
+        # Prepara il DataLoader e il LabelEncoder
+        sequence_length = 10
+        tft_dataloader, label_encoder = prepare_tft_data(
+            loaded_data_test,
+            sequence_length=sequence_length,
+            batch_size=64,
+            shuffle=False,
+            n_augments=0
+        )
+        
+        tft_model_path = os.path.join(derivatives_path, "tft_model.pth")
+        
+        # Esegui la validazione TFT
+        tft_results = validate_tft(
+            model_path=tft_model_path,
+            loaded_data_test=loaded_data_test,
+            label_encoder=label_encoder,
+            sequence_length=10,
+            batch_size=64,
+            device=device
+        )
+        logging.info(f"Risultati validazione TFT: {tft_results}")
+        print("[TFT Validation Results]", tft_results)
+
+    except Exception as e:
+        logging.error(f"Errore durante la validazione TFT: {e}", exc_info=True)
+        print("[ERRORE] Validazione TFT fallita.")
+
+    logging.info("Validazione completata.")
+    print("Validazione completata. Controlla il file di log per i dettagli.")
