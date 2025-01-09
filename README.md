@@ -222,7 +222,7 @@ python validate_models.py
 
 ---
 
-## **Contributions and License**
+## **Authors and License**
 
 - **Authors**:  
   - Gianmarco Donnesi | [donnesi.2152311@studenti.uniroma1.it](mailto:donnesi.2152311@studenti.uniroma1.it)  
