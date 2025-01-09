@@ -1,6 +1,6 @@
 # Adversarial-Training-with-Manifold-Constraints-for-EEG-Augmentation
 
-Welcome to the repository containing the code developed for the **Elective in AI (EAI)** course (A.Y. 24/25). This project focuses on generating **synthetic EEG data** using a **Wasserstein GAN with Gradient Penalty (WGAN-GP)** to enhance the performance of a **Temporal Fusion Transformer (TFT)** for classification and regression tasks on EEG signals. The repository contains scripts for data preprocessing, WGAN-GP training, TFT implementation, and validation, offering a comprehensive pipeline for advanced EEG data augmentation and analysis.
+Welcome to the repository containing the code developed for the **Elective in AI (EAI)** course (A.Y. 24/25). This project focuses on generating **synthetic EEG data** using a **Wasserstein GAN with Gradient Penalty (WGAN-GP)** to enhance the performance of a **Temporal Fusion Transformer (TFT)** for classification and regression tasks on EEG signals. This repository contains scripts for data preprocessing, WGAN-GP training, TFT implementation, and validation, offering a complete pipeline for advanced EEG data augmentation and analysis.
 
 ---
 
@@ -150,10 +150,14 @@ It is recommended to use a virtual environment:
 ```bash
 conda create -n Adversarial-Training-with-Manifold-Constraints-for-EEG-Augmentation-main python=3.8
 conda activate Adversarial-Training-with-Manifold-Constraints-for-EEG-Augmentation-main
-conda install numpy pytorch torchvision cudatoolkit=11.3 -c pytorch
-pip install scikit-learn mne pyriemann autoreject matplotlib tqdm
 ```
 *(Modify versions and channels as necessary.)*
+
+All required dependencies are listed in the `requirements.txt` file and can be installed using:
+```bash
+pip install -r requirements.txt
+```
+This will ensure that all the necessary libraries (e.g., PyTorch, MNE, PyRiemann, AutoReject) are installed in the correct versions for the project.
 
 ### **3. Preprocess EEG Data (Optional if Already Preprocessed)**
 If you don't have preprocessed `.npz` data, run:
