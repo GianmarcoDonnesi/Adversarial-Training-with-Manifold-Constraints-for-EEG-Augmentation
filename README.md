@@ -1,6 +1,6 @@
 # Adversarial-Training-with-Manifold-Constraints-for-EEG-Augmentation
 
-Welcome to the **Elective in AI (EAI)** project repository. This project focuses on generating **synthetic EEG data** using a **Wasserstein GAN with Gradient Penalty (WGAN-GP)** to enhance the performance of a **Temporal Fusion Transformer (TFT)** for classification and regression tasks on EEG signals. The repository contains scripts for data preprocessing, WGAN-GP training, TFT implementation, and validation, offering a comprehensive pipeline for advanced EEG data augmentation and analysis.
+Welcome to the repository containing the code developed for the **Elective in AI (EAI)** course (A.Y. 24/25). This project focuses on generating **synthetic EEG data** using a **Wasserstein GAN with Gradient Penalty (WGAN-GP)** to enhance the performance of a **Temporal Fusion Transformer (TFT)** for classification and regression tasks on EEG signals. The repository contains scripts for data preprocessing, WGAN-GP training, TFT implementation, and validation, offering a comprehensive pipeline for advanced EEG data augmentation and analysis.
 
 ---
 
