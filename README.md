@@ -151,7 +151,6 @@ It is recommended to use a virtual environment:
 conda create -n Adversarial-Training-with-Manifold-Constraints-for-EEG-Augmentation-main python=3.8
 conda activate Adversarial-Training-with-Manifold-Constraints-for-EEG-Augmentation-main
 ```
-*(Modify versions and channels as necessary.)*
 
 All required dependencies are listed in the `requirements.txt` file and can be installed using:
 ```bash
