@@ -224,8 +224,8 @@ python validate_models.py
 ## **Authors and License**
 
 - **Authors**:  
-  - Gianmarco Donnesi | [donnesi.2152311@studenti.uniroma1.it](mailto:donnesi.2152311@studenti.uniroma1.it)  
   - Michael Corelli | [corelli.1938627@studenti.uniroma1.it](mailto:corelli.1938627@studenti.uniroma1.it)
+  - Gianmarco Donnesi | [donnesi.2152311@studenti.uniroma1.it](mailto:donnesi.2152311@studenti.uniroma1.it)  
 
 - **License**: this project is licensed under the [GPL-3.0 License](LICENSE). See the file for more details.
 
