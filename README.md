@@ -12,7 +12,7 @@ Welcome to the repository containing the code developed for the **Elective in AI
 5. [Temporal Fusion Transformer (TFT)](#temporal-fusion-transformer-tft)
 6. [Execution Instructions](#execution-instructions)
 7. [Validation Metrics](#validation-metrics)
-8. [Contributions and License](#contributions-and-license)
+8. [Authors and License](#authors-and-license)
 
 ---
 
@@ -104,8 +104,7 @@ Generate realistic synthetic EEG data to enhance TFT training.
   - Normalizes features using **z-score**.
   - Creates a `DataLoader` for WGAN training.
 - **`wgan_gp.py`**:
-  - Implements the **WGAN-GP** in Pytorch.
-  - Definitions of **Generator**, **Discriminator** and their functions
+  - Implement **WGAN-GP** in Pytorch, defining the **Generator**, the **Discriminator**, the **Gradient Penalty Trainer** and their functions
 
 ---
 
