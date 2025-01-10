@@ -73,15 +73,15 @@ Adversarial-Training-with-Manifold-Constraints-for-EEG-Augmentation-main/
   ```
 
 ### **Preprocessing**
-1. **Filtering**: Band-pass filtering at 0.5–40 Hz (IIR filter).  
-2. **ICA and Referencing**: Artifact removal and common average referencing.  
-3. **Interpolation**: Detect and interpolate noisy channels.  
-4. **Segmentation (Epoching)**: Epochs of 0.0–0.5 seconds.  
-5. **Cleaning**: Using **AutoReject** (with “majority” consensus).  
+1. **Filtering**: band-pass filtering at 0.5–40 Hz (IIR filter).  
+2. **ICA and Referencing**: artifact removal and common average referencing.  
+3. **Interpolation**: detect and interpolate noisy channels.  
+4. **Segmentation (Epoching)**: epochs of 0.0–0.5 seconds.  
+5. **Cleaning**: using **AutoReject** (with “majority” consensus).  
 6. **Feature Extraction**:
    - Compute **SPD covariance matrices**.
    - Perform **tangent space projection** using **PyRiemann**.  
-7. **Saving**: Preprocessed data is saved in `.npz` format in the directory:
+7. **Saving**: preprocessed data is saved in `.npz` format in the directory:
    ```
    ./ds005106/derivatives/preprocessing
    ```
@@ -95,9 +95,9 @@ Adversarial-Training-with-Manifold-Constraints-for-EEG-Augmentation-main/
 Generate realistic synthetic EEG data to enhance TFT training.
 
 ### **Architecture**
-- **Generator (G)**: Takes a noise vector (`nz`) as input and generates synthetic EEG sequences of size `[batch_size, 1, 528]`.
-- **Discriminator (D)**: Evaluates the authenticity of EEG sequences (real or synthetic) using 1D Convolutions and Batch Normalization.
-- **Training with Gradient Penalty (GP)**: In the training phase, a gradient constraint is imposed so that it stabilizes.
+- **Generator (G)**: takes a noise vector (`nz`) as input and generates synthetic EEG sequences of size `[batch_size, 1, 528]`.
+- **Discriminator (D)**: evaluates the authenticity of EEG sequences (real or synthetic) using 1D Convolutions and Batch Normalization.
+- **Training with Gradient Penalty (GP)**: during the training phase, a gradient constraint is imposed to stabilize the training process.
 
 ### **Key Scripts**
 - **`prepare_wgan_data.py`**: 
@@ -228,6 +228,6 @@ python validate_models.py
   - Gianmarco Donnesi | [donnesi.2152311@studenti.uniroma1.it](mailto:donnesi.2152311@studenti.uniroma1.it)  
   - Michael Corelli | [corelli.1938627@studenti.uniroma1.it](mailto:corelli.1938627@studenti.uniroma1.it)
 
-- **License**: This project is licensed under the [GPL-3.0 License](LICENSE). See the file for more details.
+- **License**: this project is licensed under the [GPL-3.0 License](LICENSE). See the file for more details.
 
 For questions, suggestions, or bug reports, open an *Issue* or submit a *Pull Request* on GitHub.
