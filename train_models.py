@@ -111,7 +111,7 @@ def train_tft_main(
     sequence_length=10,
     batch_size=64,
     num_outputs=200,
-    num_epochs=15
+    num_epochs=20
 ):
 
     if subject_ids is None:
@@ -142,7 +142,7 @@ def train_tft_main(
     combined_labels_encoded = label_encoder.fit_transform(combined_labels)
     combined_labels = combined_labels_encoded
     num_classes = len(label_encoder.classes_)
-    num_outputs = num_classes  
+    num_outputs = num_classes 
 
     print(f"[INFO] Number of classes after encoding: {num_classes}")
 
@@ -156,11 +156,13 @@ def train_tft_main(
         'labels': combined_labels
     }
 
-    tft_dataloader, _ = prepare_tft_data(
+    train_dataloader, val_dataloader, label_encoder = prepare_tft_data(
         loaded_data_combined,
         sequence_length=sequence_length,
         batch_size=batch_size,
-        shuffle=True
+        shuffle=True,
+        n_augments=5,
+        validation_split=0.2
     )
 
     feature_dim = combined_features_2d.shape[1]
@@ -202,13 +204,15 @@ def train_tft_main(
 
     train_tft(
         model=model,
-        dataloader=tft_dataloader,
-        num_epochs=500,
+        dataloader=train_dataloader,
+        val_dataloader=val_dataloader,
+        num_epochs=2000,
         learning_rate=0.001,
         device=device,
         task='classification', # or 'regression'
         grad_clip=1.0,
-        use_scheduler=True
+        use_scheduler=True,
+        patience=40
     )
 
     print("\n[INFO] Training complete.\n")
@@ -222,11 +226,11 @@ def main():
  
     DATAPATH = './ds005106'
     SUBJECT_IDS = ['{:03d}'.format(i) for i in range(1, 52)]
-
+    
     train_wgan_synthetic(
         datapath=DATAPATH,
         subject_ids=SUBJECT_IDS,
-        n_rank=24,          
+        n_rank=24,
         batch_size=64,
         num_steps=1000,
         synth_file_name='synthetic_data.npz'

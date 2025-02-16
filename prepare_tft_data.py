@@ -5,10 +5,13 @@ from torch.utils.data import Dataset, DataLoader
 from load_preprocessed_data import load_preprocessed_data
 from tqdm.notebook import tqdm
 from sklearn.preprocessing import LabelEncoder
+from sklearn.model_selection import train_test_split
+from torch.utils.data import Subset
 
 
 class EEGSequenceDatasetTFT(Dataset):
     def __init__(self, features, labels, sequence_length=10, transform=None):
+
         self.features = features
         self.labels = labels
         self.sequence_length = sequence_length
@@ -79,7 +82,7 @@ def augment_data(features, n_augments=1):
         raise ValueError("No augmented data generated.")
     return np.array(features_augmented).reshape(-1, *features[0].shape)
 
-def prepare_tft_data(loaded_data, sequence_length=20, batch_size=64, shuffle=True, n_augments=2):
+def prepare_tft_data(loaded_data, sequence_length=20, batch_size=64, shuffle=True, n_augments=5, validation_split=0.2):
 
     X = loaded_data['ts_features']
     y = loaded_data['labels']
@@ -121,10 +124,24 @@ def prepare_tft_data(loaded_data, sequence_length=20, batch_size=64, shuffle=Tru
 
 
     dataset = EEGSequenceDatasetTFT(features_tensor, labels_tensor, sequence_length=sequence_length)
-    dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=8)
+    if validation_split > 0:
+        indices = list(range(len(dataset)))
+        train_idx, val_idx = train_test_split(indices, test_size=validation_split, random_state=42, shuffle=shuffle)
 
-    print(f"[INFO] TFT DataLoader created with {len(dataset)} samples.")
-    return dataloader, label_encoder
+        train_dataset = Subset(dataset, train_idx)
+        val_dataset = Subset(dataset, val_idx)
+
+        train_dataloader = DataLoader(train_dataset, batch_size=batch_size, shuffle=shuffle, num_workers=8)
+        val_dataloader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False, num_workers=8)
+
+        print(f"[INFO] TFT Train DataLoader created with {len(train_dataset)} samples.")
+        print(f"[INFO] TFT Validation DataLoader created with {len(val_dataset)} samples.")
+
+        return train_dataloader, val_dataloader, label_encoder
+    else:
+        dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=shuffle, num_workers=8)
+        print(f"[INFO] TFT DataLoader created with {len(dataset)} samples.")
+        return dataloader, label_encoder
 
 
 if __name__ == "__main__":
@@ -138,15 +155,21 @@ if __name__ == "__main__":
     loaded_data = load_preprocessed_data(subject_ids, derivatives_path)
 
     sequence_length = 10
-    tft_dataloader, label_encoder = prepare_tft_data(
-        loaded_data, 
-        sequence_length=sequence_length, 
-        batch_size=64, 
-        shuffle=True, 
-        n_augments=2
+    train_loader, val_loader, label_encoder = prepare_tft_data(
+        loaded_data,
+        sequence_length=sequence_length,
+        batch_size=64,
+        shuffle=True,
+        n_augments=5,
+        validation_split=0.2
     )
 
-    for batch_sequences, batch_labels in tft_dataloader:
-        print(f"Batch sequences shape: {batch_sequences.shape}")
-        print(f"Batch labels shape: {batch_labels.shape}")
+    for batch_sequences, batch_labels in train_loader:
+        print(f"Train batch sequences shape: {batch_sequences.shape}")
+        print(f"Train batch labels shape: {batch_labels.shape}")
+        break
+
+    for batch_sequences, batch_labels in val_loader:
+        print(f"Validation batch sequences shape: {batch_sequences.shape}")
+        print(f"Validation batch labels shape: {batch_labels.shape}")
         break

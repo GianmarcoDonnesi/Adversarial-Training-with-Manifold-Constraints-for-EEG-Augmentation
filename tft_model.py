@@ -262,20 +262,25 @@ class TemporalFusionTransformer(nn.Module):
         return logits
 
 
-def train_tft(model, dataloader, num_epochs=20, learning_rate=1e-3, device='cuda', task='classification', grad_clip=1.0, use_scheduler=True):
+def train_tft(model, dataloader, val_dataloader=None, num_epochs=20, learning_rate=1e-3, device='cuda', task='classification', grad_clip=1.0, use_scheduler=True, patience=100):
+
     model.to(device)
     if task == 'classification':
         criterion = nn.CrossEntropyLoss()
     elif task == 'regression':
         criterion = nn.MSELoss()
     else:
-        raise ValueError("Il task deve essere 'classification' o 'regression'.")
+        raise ValueError("Il task needs to be 'classification' or 'regression'.")
 
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=1e-5)
     if use_scheduler:
         scheduler = optim.lr_scheduler.OneCycleLR(optimizer, max_lr=1e-3, steps_per_epoch=len(dataloader), epochs=num_epochs, pct_start=0.3, anneal_strategy='cos', cycle_momentum=False )
     else:
         scheduler = None
+
+    scaler = torch.amp.GradScaler()
+    best_val_loss = float('inf')
+    epochs_without_improvement = 0
 
     for epoch in range(num_epochs):
         model.train()
@@ -286,41 +291,85 @@ def train_tft(model, dataloader, num_epochs=20, learning_rate=1e-3, device='cuda
         progress_bar = tqdm(dataloader, desc=f"Epoch {epoch+1}/{num_epochs}", leave=False)
 
         for batch_sequences, batch_labels in progress_bar:
-            torch.cuda.synchronize()
             batch_sequences = batch_sequences.to(device)
             batch_labels = batch_labels.to(device)
-
             optimizer.zero_grad()
-            outputs = model(batch_sequences)
+
+            with torch.amp.autocast(device_type='cuda'):
+                outputs = model(batch_sequences)
+                if task == 'classification':
+                    loss = criterion(outputs, batch_labels)
+                else:
+                    loss = criterion(outputs, batch_labels.float())
+
+            scaler.scale(loss).backward()
+            nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
+            scaler.step(optimizer)
+            scaler.update()
+
+            if scheduler is not None:
+                scheduler.step()
+
+            running_loss += loss.item()
 
             if task == 'classification':
-                loss = criterion(outputs, batch_labels)
                 _, predicted = torch.max(outputs.data, 1)
                 total += batch_labels.size(0)
                 correct += (predicted == batch_labels).sum().item()
-            else:
-                loss = criterion(outputs, batch_labels.float())
-
-            loss.backward()
-            torch.cuda.synchronize()
-            nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
-            optimizer.step()
-            scheduler.step()
-
-            running_loss += loss.item()
-            if task == 'classification':
-                progress_bar.set_postfix({'Loss': running_loss / (progress_bar.n + 1), 'Accuracy': 100 * correct / total})
+                progress_bar.set_postfix({'Loss': running_loss / (progress_bar.n + 1),
+                                          'Accuracy': 100 * correct / total})
             else:
                 progress_bar.set_postfix({'Loss': running_loss / (progress_bar.n + 1)})
 
         epoch_loss = running_loss / len(dataloader)
         if task == 'classification':
-            epoch_acc = 100 * correct / total
-            print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.2f}%")
-            logging.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.2f}%")
+                epoch_acc = 100 * correct / total
+                print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.2f}%")
+                logging.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}, Accuracy: {epoch_acc:.2f}%")
         else:
-            print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
-            logging.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
+                print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
+                logging.info(f"Epoch [{epoch+1}/{num_epochs}], Loss: {epoch_loss:.4f}")
 
-    print("Addestramento completato.")
-    logging.info("Addestramento completato.")
+        if val_dataloader is not None:
+            model.eval()
+            val_loss = 0.0
+            val_correct = 0
+            val_total = 0
+            with torch.no_grad():
+                for batch_sequences, batch_labels in val_dataloader:
+                    batch_sequences = batch_sequences.to(device)
+                    batch_labels = batch_labels.to(device)
+                    with torch.cuda.amp.autocast():
+                        outputs = model(batch_sequences)
+                        if task == 'classification':
+                              loss = criterion(outputs, batch_labels)
+                        else:
+                              loss = criterion(outputs, batch_labels.float())
+                    val_loss += loss.item() * batch_sequences.size(0)
+                    if task == 'classification':
+                        _, predicted = torch.max(outputs.data, 1)
+                        val_total += batch_labels.size(0)
+                        val_correct += (predicted == batch_labels).sum().item()
+
+            val_loss /= len(val_dataloader.dataset)
+            if task == 'classification':
+                val_acc = 100 * val_correct / val_total
+                print(f"Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_acc:.2f}%")
+                logging.info(f"Validation Loss: {val_loss:.4f}, Validation Accuracy: {val_acc:.2f}%")
+            else:
+                print(f"Validation Loss: {val_loss:.4f}")
+                logging.info(f"Validation Loss: {val_loss:.4f}")
+
+            if val_loss < best_val_loss:
+                best_val_loss = val_loss
+                epochs_without_improvement = 0
+                torch.save(model.state_dict(), "./tft_model.pth")
+            else:
+                epochs_without_improvement += 1
+                if epochs_without_improvement >= patience:
+                    print(f"Early stopping")
+                    logging.info(f"Early stopping")
+                    return
+
+    print("Training completed.")
+    logging.info("Training completed.")
